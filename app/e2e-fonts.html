@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <!-- 注意：本测试页故意不带 CSP，专门验证「appfont:// 协议本身能否把字体喂给页面」。
+       真实 app 的 index.html 里 font-src 已放行 appfont:，@font-face 走 font-src 不会被拦。 -->
+  <style>
+    @font-face {
+      font-family: 'Iansui';
+      src: url('appfont:///Iansui.ttf');
+      font-display: swap;
+    }
+  </style>
+</head>
+<body>
+  <span id="probe" style="font-family:'Iansui';font-size:40px">测</span>
+</body>
+</html>

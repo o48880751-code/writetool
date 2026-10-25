@@ -1,0 +1,125 @@
+{
+  "name": "writetool",
+  "version": "1.2.6",
+  "description": "本地长篇小说写作工具，数据不出本机",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "cross-env NODE_ENV=development electron .",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer",
+    "start": "npm run build && electron .",
+    "package:dir": "electron-builder --win --dir",
+    "package:meta": "node post-build-metadata.js",
+    "package:installer": "electron-builder --prepackaged release/win-unpacked",
+    "package": "node package-all.js",
+    "postmeta": "node post-build-metadata.js"
+  },
+  "build": {
+    "appId": "com.writetool.app",
+    "productName": "WriteTool",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json",
+      "build/icon.ico",
+      "!electron/test-*.js",
+      "!electron/shoot-*.js",
+      "!**/*.map",
+      "!**/node_modules/*/{test,__tests__,tests,example,examples}/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "WriteTool-${version}-setup.${ext}",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "WriteTool 长篇写作",
+      "deleteAppDataOnUninstall": false,
+      "menuCategory": false
+    },
+    "asar": true,
+    "compression": "normal",
+    "extraResources": [
+      {
+        "from": "../db",
+        "to": "modules/db",
+        "filter": [
+          "**/*",
+          "!**/test-*.js",
+          "!**/verify-*.js",
+          "!**/eval-*.js"
+        ]
+      },
+      {
+        "from": "./builtin-skills",
+        "to": "modules/builtin-skills"
+      },
+      {
+        "from": "./electron/skill-format.js",
+        "to": "modules/db/skill-format.js"
+      },
+      {
+        "from": "../memory",
+        "to": "modules/memory",
+        "filter": [
+          "**/*.js",
+          "!**/test-*.js",
+          "!**/verify-*.js",
+          "!**/eval-*.js",
+          "!**/*-probe.js",
+          "!**/probe-*.js",
+          "!**/import-*.js",
+          "!**/check-*.js",
+          "!**/*.bak"
+        ]
+      }
+    ],
+    "linux": {
+      "icon": "build/icon.png",
+      "target": [
+        "AppImage"
+      ]
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity"
+    }
+  },
+  "keywords": [],
+  "author": "WriteTool",
+  "license": "MIT",
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.2",
+    "app-builder-bin": "^4.2.0",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "@tiptap/pm": "^3.31.4",
+    "@tiptap/react": "^3.31.4",
+    "@tiptap/starter-kit": "^3.31.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "homepage": "https://github.com/writetool/writetool",
+  "copyright": "MIT License",
+  "productName": "WriteTool"
+}

@@ -1,0 +1,700 @@
+@import 'tailwindcss';
+
+/*
+ * 多套配色主题。
+ *
+ * ## 为什么做成 CSS 变量而不是 Tailwind 的 dark: 类
+ *
+ * 主题要能运行时切换（用户点一下就变），Tailwind 的 dark: 是编译期的类切换，
+ * 一次只能有两种。CSS 变量能挂任意多套，且切换只需改 html 上的 data-theme。
+ *
+ * ## 每套主题必须提供的变量
+ *
+ * 只列下面这些是因为组件里只用了这些。新增组件时**必须只用这几个变量**，
+ * 硬编码颜色会让主题失效（这是之前 StylePanel 等组件踩过的坑——
+ * 一开始写死了颜色，换主题时才发现整套要重写）。
+ */
+:root {
+  /* ---- 墨金（默认）：宣纸底 + 墨金强调，长时间写作不刺眼 ---- */
+  --paper: #faf9f7;
+  --paper-2: #f3f1ec;        /* 次级面：输入框、悬浮态 */
+  --ink: #1f2328;
+  --ink-soft: #57606a;
+  --line: #e3e0db;
+  --accent: #8b6f47;
+  --accent-soft: #f0e9dd;
+  --accent-ink: #ffffff;      /* accent 背景上的文字色 */
+  --danger: #b4463c;
+  --ok: #3d7a4e;
+
+  /* 用户气泡 */
+  --bubble-user: #8b6f47;
+  --bubble-user-ink: #ffffff;
+  /* 助手气泡 */
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #1f2328;
+}
+
+:root[data-theme='gold'] {
+  --paper: #faf9f7;
+  --paper-2: #f3f1ec;
+  --ink: #1f2328;
+  --ink-soft: #57606a;
+  --line: #e3e0db;
+  --accent: #8b6f47;
+  --accent-soft: #f0e9dd;
+  --accent-ink: #ffffff;
+  --danger: #b4463c;
+  --ok: #3d7a4e;
+  --bubble-user: #8b6f47;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #1f2328;
+}
+
+/* ---- 黛蓝：冷调，适合长夜写作 ---- */
+:root[data-theme='ink'] {
+  --paper: #f7f8fa;
+  --paper-2: #eef1f5;
+  --ink: #1a2233;
+  --ink-soft: #5a6478;
+  --line: #dfe3ea;
+  --accent: #3d5a80;
+  --accent-soft: #e3eaf3;
+  --accent-ink: #ffffff;
+  --danger: #b0413e;
+  --ok: #3a7d5c;
+  --bubble-user: #3d5a80;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #1a2233;
+}
+
+/* ---- 松绿：暖调，护眼 ---- */
+:root[data-theme='moss'] {
+  --paper: #f7f9f5;
+  --paper-2: #edf1e8;
+  --ink: #1d241d;
+  --ink-soft: #55604f;
+  --line: #dde3d8;
+  --accent: #4a6b48;
+  --accent-soft: #e4ecdf;
+  --accent-ink: #ffffff;
+  --danger: #a8453c;
+  --ok: #3d7a4e;
+  --bubble-user: #4a6b48;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #1d241d;
+}
+
+/* ---- 绛紫：浓郁，适合夜间 ---- */
+:root[data-theme='plum'] {
+  --paper: #f9f7fa;
+  --paper-2: #f0ecf4;
+  --ink: #241d2b;
+  --ink-soft: #635a6b;
+  --line: #e4dfe8;
+  --accent: #6b4a72;
+  --accent-soft: #ece4ef;
+  --accent-ink: #ffffff;
+  --danger: #b04141;
+  --ok: #4a7a5c;
+  --bubble-user: #6b4a72;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #241d2b;
+}
+
+/* ---- 赭石：土色，接近传统纸 ---- */
+:root[data-theme='ochre'] {
+  --paper: #faf6ee;
+  --paper-2: #f2ebdd;
+  --ink: #2b2318;
+  --ink-soft: #6b5c46;
+  --line: #e6dcc8;
+  --accent: #9a6b3f;
+  --accent-soft: #f0e5d2;
+  --accent-ink: #ffffff;
+  --danger: #a8423a;
+  --ok: #4c7346;
+  --bubble-user: #9a6b3f;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #fffdf8;
+  --bubble-ai-ink: #2b2318;
+}
+
+/* ---- 石青：清冷，高对比 ---- */
+:root[data-theme='slate'] {
+  --paper: #f5f6f7;
+  --paper-2: #e9ebee;
+  --ink: #15181c;
+  --ink-soft: #4d545c;
+  --line: #d8dce1;
+  --accent: #455a64;
+  --accent-soft: #e0e7ea;
+  --accent-ink: #ffffff;
+  --danger: #b03a3e;
+  --ok: #3a7a64;
+  --bubble-user: #455a64;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #15181c;
+}
+
+/* ---- 夜墨：深色主题 ---- */
+:root[data-theme='night'] {
+  --paper: #16181c;
+  --paper-2: #1f2228;
+  --ink: #e8e6e1;
+  --ink-soft: #9aa0a8;
+  --line: #2c3037;
+  --accent: #c9a86a;
+  --accent-soft: #2a2620;
+  --accent-ink: #1a1c1f;
+  --danger: #e07070;
+  --ok: #6fbf8a;
+  --bubble-user: #c9a86a;
+  --bubble-user-ink: #1a1c1f;
+  --bubble-ai: #232630;
+  --bubble-ai-ink: #e8e6e1;
+}
+
+/* ---- 夜黛：深色冷调 ---- */
+:root[data-theme='night-ink'] {
+  --paper: #14171c;
+  --paper-2: #1c2027;
+  --ink: #e2e6ec;
+  --ink-soft: #939ca8;
+  --line: #282e37;
+  --accent: #7fa8d4;
+  --accent-soft: #1f2831;
+  --accent-ink: #14171c;
+  --danger: #e08a8a;
+  --ok: #7ec9a4;
+  --bubble-user: #4a6f9e;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #1f242c;
+  --bubble-ai-ink: #e2e6ec;
+}
+
+/* ---- 深夜松：深色暖调，护眼 ---- */
+:root[data-theme='night-moss'] {
+  --paper: #151815;
+  --paper-2: #1d201c;
+  --ink: #e4e8e0;
+  --ink-soft: #96a08e;
+  --line: #2a2f27;
+  --accent: #8fbd7a;
+  --accent-soft: #1f2a1c;
+  --accent-ink: #151815;
+  --danger: #e08a7a;
+  --ok: #8fbd7a;
+  --bubble-user: #4e7048;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #1f241e;
+  --bubble-ai-ink: #e4e8e0;
+}
+
+/* ---- 高对比：视力不佳时用 ---- */
+:root[data-theme='contrast'] {
+  --paper: #ffffff;
+  --paper-2: #f0f0f0;
+  --ink: #000000;
+  --ink-soft: #333333;
+  --line: #000000;
+  --accent: #0000cc;
+  --accent-soft: #e0e0ff;
+  --accent-ink: #ffffff;
+  --danger: #cc0000;
+  --ok: #006600;
+  --bubble-user: #0000cc;
+  --bubble-user-ink: #ffffff;
+  --bubble-ai: #ffffff;
+  --bubble-ai-ink: #000000;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-family, system-ui, 'Microsoft YaHei', sans-serif);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* 主题切换时颜色渐变，避免闪一下 */
+  transition: background-color .18s ease, color .18s ease;
+}
+
+/* ---- 编辑区 ---- */
+.editor-surface {
+  outline: none;
+  min-height: 100%;
+  padding: 2.2rem 3.4rem 6rem;
+  max-width: 46rem;
+  margin: 0 auto;
+  line-height: 1.9;
+  letter-spacing: 0.01em;
+}
+.editor-surface p { margin: 0 0 1em; }
+.editor-surface h1 { font-size: 1.6em; margin: 1.2em 0 0.6em; font-weight: 600; }
+.editor-surface h2 { font-size: 1.3em; margin: 1.1em 0 0.5em; font-weight: 600; }
+.editor-surface h3 { font-size: 1.12em; margin: 1em 0 0.4em; font-weight: 600; }
+.editor-surface ul, .editor-surface ol { padding-left: 1.5em; margin: 0 0 1em; }
+.editor-surface blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1em;
+  color: var(--ink-soft);
+  margin: 0 0 1em;
+}
+.editor-surface code {
+  background: var(--accent-soft);
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.editor-surface hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+
+/* ---- 对话气泡 ---- */
+.msg-user, .msg-ai {
+  /* ⚠ 2026-10-15：78% → 92%。原来右边空掉一大块，
+     羽毛菌：「右边留空太多了这个文字框完全可以顶到卡片边框」。
+     仍留一点余量是为了长句子不贴到滚动条上。 */
+  max-width: 92%;
+  padding: .55rem .8rem;
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+:root {
+  /* ---- 引用 chip 的两套色（技能=紫 / 文件=绿）----
+     ⚠ 2026-10-16：原来这两套色**写死在 ChatPanel 的 JSX 里**，
+       聊天卡片一变深，它们就是贴在深色卡片上的两块荧光。
+       改成变量，深浅各一套；JSX 只引用变量名，不再写死颜色。 */
+  --chip-skill-bg: #f3e8ff;
+  --chip-skill-bg-off: #faf5ff;
+  --chip-skill-ink: #6b21a8;
+  --chip-skill-ink-off: #a78bca;
+  --chip-skill-edge: #e9d5ff;
+  --chip-file-bg: #dcfce7;
+  --chip-file-bg-off: #f0fdf4;
+  --chip-file-ink: #166534;
+  --chip-file-ink-off: #7ba88a;
+  --chip-file-edge: #bbf7d0;
+}
+
+:root[data-dark='1'] {
+  /* 深色下同色系压暗、字提亮（保持"技能紫 / 文件绿"的辨识，但不刺眼） */
+  --chip-skill-bg: #2c2140;
+  --chip-skill-bg-off: #241b33;
+  --chip-skill-ink: #cbaaf5;
+  --chip-skill-ink-off: #8d78ab;
+  --chip-skill-edge: #40325a;
+  --chip-file-bg: #1b3326;
+  --chip-file-bg-off: #16281e;
+  --chip-file-ink: #8ad7a8;
+  --chip-file-ink-off: #6f9e82;
+  --chip-file-edge: #2b4d38;
+}
+
+/**
+ * ⚠⚠ 聊天区**在浅色主题下固定浅色**（2026-10-15 羽毛菌要求），
+ *   **在深色主题下跟随主题**（2026-10-16 羽毛菌：「使用夜黛主题时，
+ *   别的卡片都是黑色，为什么聊天框卡片是白色的」）。
+ *
+ * 这两条不矛盾，别把其中一条当成对另一条的否定：
+ *   10-15 那次的原话是「这个对话底色不应该是深色，文字白色。应该和 workbuddy
+ *   一样，灰色底色，黑色文字」—— 他指的是**浅色界面里**聊天区杵着两块深色气泡，
+ *   看起来像补丁。而 10-16 这次是**整个深色界面里聊天卡片是白的**。
+ *   所以：浅色主题维持 workbuddy 那套（灰底黑字浅气泡），
+ *        深色主题跟着主题走（见下面 `[data-dark]` 那段）。
+ *
+ * 配色取的是 workbuddy 的路子：底 #f5f6f8、用户泡 #e6e8eb、模型泡纯白。
+ * 对比度 15:1 以上，浅色界面上也看得出层次。
+ */
+/**
+ * 输入区（输入框所在的那一栏）的底色。
+ *
+ * ⚠⚠ **必须与消息区 `.chat-surface` 同色**（2026-10-16 19:41 羽毛菌：
+ * 「能不能把这个粗的分隔线隐藏掉 / 做成无痕的」）。
+ *
+ * ⚠ 原因：只要输入区与消息区**底色不同**，交界处必然有一道色差 ——
+ *   而那道色差是**纯色块边界**，它不是 border（粗细由抗锯齿决定，看着比 1px 粗），
+ *   也不是 box-shadow（阴影只压暗，这道是变浅），所以按"找某个元素"是找不到它的。
+ *   ⚠⚠ 我前四轮都在找"那一条线"，真正要做的是**让两块底色一样**。
+ *
+ * ⚠ 同色 + 输入框不再有卡片边界（边框/圆角/投影全去掉）= 无痕。
+ * ⚠ 但开了自定义背景图时**必须透明**，否则会在背景图上刷一层底色 ——
+ *   `body.bg-photo` 那段已经把消息区摁成透明了，这边要跟上。
+ */
+.chat-composer {
+  background: #f5f6f8;
+}
+body.bg-photo .chat-composer {
+  background: transparent !important;
+}
+:root[data-dark='1'] .chat-composer {
+  background: var(--paper);
+}
+
+/**
+ * 消息区：横向滚动条是"无痕"的死敌。
+ *
+ * ⚠⚠ `overflow-y: auto` 会让另一个轴从 visible **被计算成 auto**（CSS 规范），
+ *   于是只要有子元素宽度超出，底部就会浮出一条**通栏的浅灰滚动条**：
+ *   两端圆头、颜色接近 --line、约 6px 粗 —— 长得极像一条分割线，
+ *   而且它**不是任何元素**，`elementFromPoint` 只会命中 `.chat-surface` 自己。
+ * ⚠⚠⚠ 我为它排除了五项（阴影/border/独立元素/滚动条/有没有内容）都没排掉，
+ *   最后是把它当"卡片边界"整块去掉才顺带解决的 —— 但根因在这里，注释必须写清楚。
+ */
+.chat-surface {
+  background: #f5f6f8;
+  color: #1f2328;
+  --chat-ink: #1f2328;
+  --chat-ink-soft: #6b7280;
+  --chat-line: #e3e5e9;
+  --chat-user-bg: #e2e5ea;
+  --chat-user-ink: #14181d;
+  --chat-ai-bg: #ffffff;
+  --chat-ai-ink: #1f2328;
+  /* 横向永不滚动：聊天区不需要横滚，浮出来那条会被当成分割线 */
+  overflow-x: hidden;
+  /**
+   * ⚠⚠ 这里**不能**用 `scrollbar-width: none`（2026-10-24 修）。
+   *
+   * 原来写的是 none，注释说"别让它出现在这条轴上"—— 但 `scrollbar-width`
+   * **没有单轴版本**，它一藏就是**两个方向全藏**。结果是：
+   * 用户看不到纵向滚动条、也没法拖，只能用鼠标滚轮一滚滚半天。
+   *
+   * 而横向其实早就被上一行 `overflow-x: hidden` 挡住了，
+   * 根本不需要 `scrollbar-width` 帮忙。
+   *
+   * 现在用 thin：纵向保留一条细滚动条，看得见、能拖，视觉上也不抢戏。
+   */
+  scrollbar-width: thin;
+  /* 拇指用半透明灰：纯 --chat-line 太浅（几乎看不见），纯 ink-soft 又太扎眼 */
+  scrollbar-color: rgba(107, 114, 128, 0.35) transparent;
+}
+.chat-surface::-webkit-scrollbar:horizontal {
+  height: 0;
+  display: none;
+}
+
+/**
+ * 深色主题：聊天区**跟主题**（卡片、文字、气泡、描边全部改走主题变量）。
+ *
+ * ⚠⚠ 选择器用 `[data-dark='1']` 而不是手抄三个 `[data-theme='night-*']`：
+ *   手抄的列表漏一个，就是"某个深色主题下聊天卡片还是白的"，
+ *   而且要等用户切到那套主题才会发现。data-dark 由 themes.js 的
+ *   `applyTheme` 写（它手里有 THEMES 的 dark 标记），加主题时自动跟上。
+ *
+ * ⚠ 气泡色直接用主题自己的 `--bubble-*`：那套值本来就是按"深色下要能看"
+ *   调的（夜黛：用户泡 #4a6f9e / 模型泡 #1f242c），别在这里另发明一套。
+ */
+:root[data-dark='1'] .chat-surface {
+  background: var(--paper);
+  color: var(--ink);
+  --chat-ink: var(--ink);
+  --chat-ink-soft: var(--ink-soft);
+  --chat-line: var(--line);
+  --chat-user-bg: var(--bubble-user);
+  --chat-user-ink: var(--bubble-user-ink);
+  --chat-ai-bg: var(--bubble-ai);
+  --chat-ai-ink: var(--bubble-ai-ink);
+}
+
+/* 消息操作按钮：悬停/成功/危险在深色下也要看得见（原来写死的是浅色底上的色） */
+:root[data-dark='1'] .msg-acts button:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, .08);
+}
+:root[data-dark='1'] .msg-acts button.ok { color: var(--ok); }
+:root[data-dark='1'] .msg-acts button.danger:hover,
+:root[data-dark='1'] .msg-acts button.armed { color: var(--danger); }
+.chat-surface .msg-user {
+  background: var(--chat-user-bg);
+  color: var(--chat-user-ink);
+  margin-left: auto;
+  border-bottom-right-radius: 3px;
+}
+.chat-surface .msg-ai {
+  background: var(--chat-ai-bg);
+  color: var(--chat-ai-ink);
+  border: 1px solid var(--chat-line);
+  border-bottom-left-radius: 3px;
+}
+
+/* ---- 消息行：头像 + 气泡 + 操作条 ---- */
+/**
+ * 消息行 = 两层（2026-10-15 改）：
+ *   第一行 .msg-head（头像 + 气泡，左右排）
+ *   第二行 .msg-acts（复制/撤回/删除）
+ *
+ * ⚠ 原来是三个元素**横排**，操作条挤在气泡侧面。羽毛菌指出来：
+ *   「应该对话文字框的下方而不是侧方，work buddy 也是在下方啊」。
+ *   短消息时那一段空白尤其难看。
+ */
+.msg-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.msg-row.is-user { align-items: flex-end; }
+.msg-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 100%;
+}
+.msg-row.is-user .msg-head { flex-direction: row-reverse; }
+
+/**
+ * 头像。
+ *
+ * ⚠ 刻意用**几何字母**而不是 emoji：emoji 会渲染成彩色字形，
+ *   跟整体配色打架，而颜色不可控（同一条聊天里的正文是跟随主题的）。
+ */
+.msg-avatar {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 2px;
+  user-select: none;
+}
+.msg-avatar.ai { background: #3f4b5f; color: #fff; }
+.msg-avatar.user { background: #9aa1ac; color: #fff; }
+
+/* 操作条：纯图标 + 悬停出文字（2026-10-15 羽毛菌：「复制可以用两个方形，
+   撤回可以用一个弧形箭头，删除可以用一个垃圾桶来代替呀，不一定都要文字」）。
+   默认**淡显**而不是全透明 —— 全透明的按钮没人会发现。 */
+.msg-acts {
+  display: flex;
+  gap: 2px;
+  opacity: .4;
+  transition: opacity .12s ease;
+  flex: 0 0 auto;
+}
+.msg-row:hover .msg-acts,
+.msg-row:focus-within .msg-acts { opacity: 1; }
+
+.msg-acts button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--chat-ink-soft, #6b7280);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.msg-acts button:hover { color: #1f2328; background: rgba(0, 0, 0, .05); }
+.msg-acts button.danger:hover { color: #b42318; background: rgba(180, 35, 24, .07); }
+.msg-acts button.ok { color: #15803d; }
+.msg-acts button.armed { color: #b42318; background: rgba(180, 35, 24, .1); }
+
+/* 悬停提示：图标没有文字，必须靠它说明白这个图标是干什么的。
+   ⚠ 不用原生 title —— 出来太慢，而且样式是系统原生的，跟界面不像一回事。 */
+.msg-acts button::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #2b2f36;
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .1s ease;
+}
+.msg-acts button:hover::after { opacity: 1; }
+
+/* 流式输出时的光标 */
+.msg-ai.streaming::after {
+  content: '▋';
+  color: var(--accent);
+  animation: blink 1s steps(2) infinite;
+  margin-left: 1px;
+}
+@keyframes blink { 0%, 50% { opacity: 1 } 50.01%, 100% { opacity: 0 } }
+
+/* 生成中的段落高亮 */
+.ProseMirror-selectednode { background: var(--accent-soft); }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 5px;
+  border: 2px solid var(--paper);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-soft); }
+/* ---------------------------------------------------------------
+   Markdown 预览的排版修正
+
+   ⚠ Tailwind v4 的 preflight 会做全局重置：
+        ol, ul { list-style: none; margin: 0; padding: 0 }
+        th { font-weight: inherit; text-align: left }
+        table { border-collapse: collapse }
+
+   结果是「看起来渲染成功，其实信息丢了」：
+   列表项没有 bullet（变成缩进段落），表头不加粗、默认左对齐。
+   这类问题截图里能看出来，但很容易被当成"样式就这样"放过。
+   这里显式恢复，作用范围限定在 .md-body 内。
+   --------------------------------------------------------------- */
+.md-body ul { list-style: disc; margin: 0 0 8px; padding-left: 22px; }
+.md-body ol { list-style: decimal; margin: 0 0 8px; padding-left: 22px; }
+.md-body li { margin-bottom: 2px; }
+.md-body th { font-weight: 600; text-align: left; }
+.md-body hr { border: none; border-top: 1px solid var(--line); margin: 12px 0; }
+.md-body blockquote { margin: 0 0 10px; }
+.md-body p { margin: 0 0 8px; }
+
+
+/* ============================================================
+   自定义背景图（2026-10-16）
+   ============================================================
+
+   ## 只有一件事要做：让面板"透"出背景
+
+   背景图是一层 `position:fixed; z-index:-1` 的图（见 components/Background.jsx），
+   画在 canvas 之上、所有内容之下。**但面板是不透明的 `--paper`** ——
+   于是图只从**顶栏**那条缝里露出来（顶栏是当时唯一没有背景色的元素）。
+   2026-10-16 羽毛菌的现场描述就是这一条：
+   「怎么就只有顶部，卡片里的白色没有替换」。
+
+   ## ⚠⚠ 光把 `--paper` 改成半透明是**不够**的：纸色是乘起来的
+
+   实测（`diag-bg.js` 会把每个点下面有几层纸列出来）：
+
+       左栏 3 层、右栏 3 层、中栏 5 层纸 ── 全部 66% 半透明时
+       有效纸色 = 1 − 0.34³ = 96%，中栏 = 99.5% ── 图基本还是看不见。
+
+   而且**层数每个区域都不一样**（容器 / 分栏 / 内容根 / 内层容器各刷一次），
+   想靠"把 alpha 调低一点"糊过去是不可能的：调低到 3 层刚好，
+   1 层的顶栏就变成半透明黑影；调到 1 层刚好，3 层的地方又是死白。
+
+   ## 做法：**只让该刷色的那一层刷**
+
+   ① `--paper` 给一个固定的 66%（分栏与顶栏就是这一层玻璃）；
+   ② 把"套娃"里**多出来的那几层直接摁成透明**
+      （分栏容器的底、每一栏的内容根、话题区那层写死的灰底）——
+      它们是 `!important` 盖掉行内样式，因为这些背景全是行内写的；
+   ③ 弹窗/菜单这类**必须挡住底下的内容**的浮层，单独给 `--float`（94%），
+      否则 66% 的弹窗会透出背后的正文，读不成。
+   ------------------------------------------------------------ */
+:root {
+  /* 原色留一份：下面所有 color-mix 都从它算，避免自我引用成环 */
+  --paper-base: var(--paper);
+  --paper-2-base: var(--paper-2);
+  /* 没有背景图时 --float 就等于纸色 —— 下面几条规则全是空转 */
+  --float: var(--paper);
+  --float-2: var(--paper-2);
+}
+
+/**
+ * ⚠⚠ 选择器挂在 **body.bg-photo** 上，不是 `:root`：
+ *   在 html 上写 `--paper: color-mix(… var(--paper-base) …)` 会成环
+ *   （--paper-base 正是在 html 上由 --paper 算出来的）。
+ *   挂在 body 之后，--paper-base 是从 html **继承**来的、已经算好的颜色。
+ *   class 由 `useBackground()` 里那个 effect 开/关。
+ *
+ * 66% / 52% 是"字还读得清"和"图看得见"的平衡点：
+ * 再低 → 深色背景图上的 --ink-soft 小字开始糊；再高 → 等于没设。
+ *
+ * ⚠ `--bubble-*` 与 `.chat-surface` 里的 `--chat-*` **故意一个都不动**：
+ *   羽毛菌要的就是「背景一层，聊天气泡一层」—— 气泡是内容，不是背景。
+ */
+body.bg-photo {
+  --paper: color-mix(in srgb, var(--paper-base) 66%, transparent);
+  --paper-2: color-mix(in srgb, var(--paper-2-base) 52%, transparent);
+  /**
+   * ⚠⚠ 浮层用**完全不透明**的纸色，不是"更实一点的玻璃"。
+   *
+   *   第一版给的是 94%（"透一点点图，好看"），实测在设置页上就露馅：
+   *   背后的正文以 6% 透出来，深色大字在浅底上**一眼可见**，
+   *   整个设置页像印在另一页纸上，读起来很脏。
+   *   （`diag-bg.js` 打出来的像素 = 247,249,250，鬼影差值 ~13 级 ——
+   *   6% 听着很小，对深色文字来说一点都不小。）
+   *
+   *   ⚠ 「背景图该透出来的地方」是**面板**（卡片、栏），不是弹窗。
+   *     弹窗的职责是**挡住底下**，两者目标相反，别用同一个数。
+   */
+  --float: var(--paper-base);
+  --float-2: var(--paper-2-base);
+
+  /* ⚠ body 自己的底色**保持不透明**：它就是整窗的底。
+     图是画在 canvas 之上的，不透明的 body 挡不住它；
+     反过来（body 也半透明）会在图还没解码完的那一帧闪出默认底色。 */
+  background: var(--paper-base);
+}
+
+/* ① 分栏容器：纯套娃，一层底都不要刷 */
+body.bg-photo [data-panes-root] {
+  background-color: transparent !important;
+}
+
+/**
+ * ② 每一栏的内容根。
+ *
+ * ⚠ 为什么只清**直接子元素**、不清所有后代：
+ *   后代里混着**浮层**（下拉菜单 / 右键菜单 / 提到链接的气泡），
+ *   它们必须保留底色，否则文字会直接叠在背后的正文上。
+ *   实测多出来的层数全部来自「容器 → 分栏 → 内容根」这三层套娃，
+ *   只清这三层就够。深一层的地方（输入框、工具卡）保留 66% 纸，
+ *   反而正好当"内容面比背景面更实"的层次。
+ */
+body.bg-photo [data-pane] > * {
+  background-color: transparent !important;
+}
+
+/**
+ * ③ 话题区那层写死的浅灰底（`index.css` 里 `.chat-surface` 的 `#f5f6f8`）。
+ *   ⚠ 它是**硬编码颜色**，不吃 `--paper`，所以必须在 bg-photo 下单独摁掉 ——
+ *     漏了它的话中栏就是"一片死白，只有别的栏透出图"。
+ */
+body.bg-photo .chat-surface {
+  background-color: transparent !important;
+}
+
+/**
+ * ④ 浮层：全屏弹窗（项目切换 / 设置 / 回收站 / 各种确认框）+ 挂在下拉位置上的
+ *   菜单（工具栏溢出菜单、文件树右键菜单、上下文用量气泡）。
+ *   **必须挡住底下的内容**，否则文字叠文字。
+ *
+ * ⚠ 用「类名组合」而不是逐个加 class，是因为这些浮层的根节点本来就很统一：
+ *     · 全屏弹窗 → `.fixed.inset-0` / `.absolute.inset-0`（后者全项目只有设置页一个）
+ *     · 锚定菜单 → `.z-50`（全项目 14 处，全是浮层）+ `.shadow-lg`（全项目 2 处，都是菜单）
+ *   `--paper` 会继承下去，内层卡片自动跟着变实。
+ *
+ * ⚠ 漏掉的后果是"弹窗半透明、透出后面的列表"，比"面板不够透"严重得多 ——
+ *   所以宁可写死一点。判据：`diag-bg.js` 会把每个点下面有几层纸、
+ *   以及 `position:fixed` 的浮层逐个列出来（设置页那层就是靠它才发现的：
+ *   它是 `absolute`，不是 `fixed`，第一版规则漏了它）。
+ */
+body.bg-photo .fixed.inset-0,
+body.bg-photo .absolute.inset-0,
+body.bg-photo .z-50,
+body.bg-photo .shadow-lg {
+  --paper: var(--float);
+  --paper-2: var(--float-2);
+}

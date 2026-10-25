@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 设计源文件。改设计改这里，然后重跑 make-icon.js。
+     make-icon.js 用纯 Node 算像素渲染，不依赖 Electron/GPU，
+     所以这份 SVG 只是给人看的，改完记得同步 drawIcon()。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="48" fill="rgb(250,249,247)"/>
+  <rect x="50" y="38" width="132" height="180" rx="11" fill="rgb(227,224,219)"/>
+  <rect x="53" y="41" width="126" height="174" rx="9" fill="rgb(255,255,255)"/>
+  <g stroke="rgb(227,224,219)" stroke-width="7" stroke-linecap="round">
+    <line x1="76" y1="86" x2="156" y2="86"/>
+    <line x1="76" y1="112" x2="156" y2="112"/>
+    <line x1="76" y1="138" x2="126" y2="138"/>
+  </g>
+  <line x1="76" y1="164" x2="112" y2="164" stroke="rgb(31,35,40)" stroke-width="7" stroke-linecap="round"/>
+  <line x1="188" y1="56" x2="188" y2="168" stroke="rgb(139,111,71)" stroke-width="16" stroke-linecap="round"/>
+  <path d="M188 160 L177 200 L199 200 Z" fill="rgb(139,111,71)"/>
+  <circle cx="166" cy="208" r="9" fill="rgb(139,111,71)" opacity="0.9"/>
+  <circle cx="145" cy="219" r="5" fill="rgb(139,111,71)" opacity="0.55"/>
+</svg>
