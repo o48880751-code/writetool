@@ -1,5 +1,7 @@
 # WriteTool
 
+[![verify](https://github.com/o48880751-code/writetool/actions/workflows/verify.yml/badge.svg)](https://github.com/o48880751-code/writetool/actions/workflows/verify.yml)
+
 面向**长篇连载**（十万字到数百万字）的本地优先写作工具。把一个能读能写的大模型，放进一个**受控**的工作台里：它能查设定、读章节、改文件，但每一次动你的稿子都要你点头。
 
 > 数据全部留在本机。模型可以接云端 API，也可以接本地 Ollama。
@@ -7,7 +9,7 @@
 <!-- 截图放在 app/shots/ 下 -->
 ![主界面：左侧对话，右侧章节编辑器](app/shots/main-ui.png)
 
-**168** 个源码文件 · **6.6 万** 行代码 · **70** 个判据文件（43 个零依赖，clone 下来直接跑） · 无后端服务
+**168** 个源码文件 · **6.6 万** 行代码 · **70** 个判据文件（50 个零依赖，clone 下来直接跑） · 无后端服务
 
 ---
 
@@ -102,6 +104,7 @@ npm run package
 ## 目录结构
 
 ```
+├── verify.js                 判据批量运行器：自动跳过需要 npm 的，跑剩下的零依赖判据
 ├── run-verify.js             本地模型 Tool Calling 可行性验证（需本地 Ollama）
 ├── test-mock.js              编排层离线自测：可编程假模型驱动，27 个用例覆盖 16 类异常分支
 ├── eval-retrieval.js         检索层离线评测：质量与上下文成本，改前/改后对比
@@ -140,23 +143,30 @@ npm run package
 
 ## 怎么验证
 
-判据不依赖测试框架：每个 `test-*.js` 自己打印「通过 N / 失败 M」，退出码非 0 即失败。
+判据不依赖测试框架：每个 `test-*.js` 自己打印「通过 N / 失败 M」，退出码非 0 即失败。跑全部零依赖判据只要一条命令：
+
+```bash
+node verify.js           # 逐项跑，末尾汇总
+node verify.js --ci      # 只跑核心集 17 个（GitHub Actions 每次提交跑的就是这个）
+node verify.js --list    # 列清单，标注每个判据缺哪个 npm 包
+```
+
+它先静态扫每个判据的 `require`，需要 Electron / TipTap / Playwright 的自动跳过，剩下 50 个只用 Node 内置模块的直接跑，不装任何东西。当前 **42 通过 / 8 未通过**：
+
+| 类别 | 数量 | 说明 |
+|---|---|---|
+| 要额外环境 | 3 | 联网拉字体、本地 Ollama 服务、`dist/` 构建产物 |
+| 判据或代码没跟上 | 5 | `test-distill` 指向已下线的组件、`test-tdz`（App.jsx 的 TDZ）、`test-skill-content`（内置技能正文超预算 98 字）、`test-main-boot`、`test-packaging` |
+
+另有 **20 个需要 `npm install`**：Electron 真窗口 17 个（主题、标题栏、IME、菜单、UI 像素扫描）、`@tiptap/pm/model` 2 个、`playwright` 1 个。这些跑的是真界面，不在 CI 范围内。
+
+单个判据也能直接跑：
 
 ```bash
 cd app
 node test-agent-loop.js     # 工具循环：22 通过 / 0 失败
 node test-auto-save.js      # 自动落盘：48 条
 ```
-
-70 个判据文件里 **43 个零依赖**，clone 下来不装任何东西就能跑，覆盖工具协议、审批闸门、上下文预算、数据迁移、范围守卫、空响应处理这些核心逻辑。
-
-其余 27 个分三类：
-
-| 类别 | 数量 | 缺什么 |
-|---|---|---|
-| 要 `npm install` | 19 | Electron 真窗口（16 个：主题、标题栏、IME、UI 像素扫描）、`@tiptap/pm/model`（2 个）、`playwright`（1 个） |
-| 要额外环境 | 3 | 本地 Ollama 服务、`dist/` 构建产物、联网下载字体 |
-| 代码或判据自身有问题 | 5 | `test-distill` 指向已下线的组件、`test-tdz`（App.jsx 的 TDZ）、`test-skill-content`（内置技能正文超预算）、`test-main-boot`、`test-packaging` |
 
 **模型层、检索层、数据层的离线评测**不需要模型，也不需要你准备数据——仓库带了一份示例设定库 [`samples/world-bible.sample.json`](samples/world-bible.sample.json)，脚本找不到真实设定库时自动回落到它：
 
@@ -219,8 +229,8 @@ node test-scope-guard.js         # 范围守卫
 - **不做自动更新**（未签名 exe 会被 SmartScreen 拦在下载阶段，体验比"手动下载"更差）
 - **多人协作、云同步**：不做，也不打算做
 - 上下文压缩是启发式的（按段落 / 摘要裁），不是语义检索
-- **判据不是全部即插即跑**：70 个里 43 个零依赖，其余要 npm 包或构建产物
-- **7 个判据目前是红的**：属判据过时或断言未跟上代码，不是环境问题。绿灯数会随代码改动漂移，别当成「测试全过」的证据
+- **判据不是全部即插即跑**：70 个里 50 个零依赖，其余要 npm 包或构建产物
+- **8 个判据目前没通过**：3 个缺外部环境（联网 / Ollama / dist），5 个属判据过时或断言未跟上代码。绿灯数会随代码改动漂移，别当成「测试全过」的证据
 
 ---
 
