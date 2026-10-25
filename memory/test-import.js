@@ -18,16 +18,30 @@ const SRC = path.join(os.homedir(), 'AI写小说', '墨染仙途', '小说资料
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 function check(name, fn) {
   try {
     fn();
     passed++;
     console.log(`  ✓ ${name}`);
   } catch (e) {
+    // 需要外部数据才能跑的用例用 skip() 抛出，不计入失败
+    if (e && e.code === 'SKIP') {
+      skipped++;
+      console.log(`  ⊘ ${name}（跳过）`);
+      console.log(`    ${e.message}`);
+      return;
+    }
     failed++;
     console.log(`  ✗ ${name}`);
     console.log(`    ${e.message}`);
   }
+}
+
+function skip(msg) {
+  const e = new Error(msg);
+  e.code = 'SKIP';
+  throw e;
 }
 
 console.log('\n一、实体名闸门（曾把 3269 条碎片灌进库）');
@@ -119,7 +133,7 @@ check('境界时间线只取起始值（汪宁元婴→化神→合体→大乘�
 console.log('\n四、端到端导入（真实库）');
 
 check('导入《墨染仙途》真实设定库', () => {
-  if (!fs.existsSync(SRC)) throw new Error(`找不到 ${SRC}`);
+  if (!fs.existsSync(SRC)) skip(`未找到 ${SRC}，端到端导入需要自备源目录`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mdy-import-'));
   const db = path.join(tmp, 'x.db');
   const r = importModianditu(db, SRC);
@@ -153,7 +167,7 @@ check('导入《墨染仙途》真实设定库', () => {
 });
 
 check('前缀命名归一且不误伤泛指（年轻一辈/传人）', () => {
-  if (!fs.existsSync(SRC)) throw new Error('找不到源目录');
+  if (!fs.existsSync(SRC)) skip(`未找到 ${SRC}，别名归一验证需要自备源目录`);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mdy-alias-'));
   const db = path.join(tmp, 'y.db');
   importModianditu(db, SRC);
@@ -175,7 +189,7 @@ check('前缀命名归一且不误伤泛指（年轻一辈/传人）', () => {
 });
 
 console.log(`\n${'-'.repeat(52)}`);
-console.log(`导入器：${passed} 通过 / ${failed} 失败`);
+console.log(`导入器：${passed} 通过 / ${failed} 失败${skipped ? ` / ${skipped} 跳过` : ''}`);
 process.exit(failed ? 1 : 0);
 
 // 局部 require 断言（放在末尾避免污染上方作用域）
