@@ -7,7 +7,7 @@
 <!-- 截图放在 app/shots/ 下 -->
 ![主界面：左侧对话，右侧章节编辑器](app/shots/main-ui.png)
 
-**168** 个源码文件 · **6.6 万** 行代码 · **70** 个可直接 `node` 运行的判据文件 · 无后端服务
+**168** 个源码文件 · **6.6 万** 行代码 · **70** 个判据文件（39 个零依赖，clone 下来直接跑） · 无后端服务
 
 ---
 
@@ -102,6 +102,10 @@ npm run package
 ## 目录结构
 
 ```
+├── run-verify.js             本地模型 Tool Calling 可行性验证（需自备 world-bible.json）
+├── test-mock.js              编排层离线自测：可编程假模型驱动，16 类异常分支
+├── eval-retrieval.js         检索层离线评测：质量与上下文成本，改前/改后对比
+│
 ├── app/                      桌面应用主体
 │   ├── electron/             主进程（Node 环境，能碰文件和网络）
 │   │   ├── main.js           入口 + 全部 IPC handler
@@ -127,6 +131,40 @@ npm run package
 │
 └── editor/                   章节编辑器的流式接口（独立于 UI，可单测）
 ```
+
+各模块另有独立 README：[`app/`](app/README.md)（打包流程、产物结构、换机器会踩的环境坑）· [`editor/`](editor/README.md)（流式写入层）· [`memory/`](memory/README.md)（上下文工程与状态回写）
+
+---
+
+## 怎么验证
+
+判据不依赖测试框架：每个 `test-*.js` 自己打印「通过 N / 失败 M」，退出码非 0 即失败。
+
+```bash
+cd app
+node test-agent-loop.js     # 工具循环：22 通过 / 0 失败
+node test-auto-save.js      # 自动落盘：48 条
+```
+
+70 个判据文件里 **39 个零依赖**，clone 下来不装任何东西就能跑，覆盖工具协议、审批闸门、上下文预算、数据迁移、范围守卫、空响应处理这些核心逻辑。
+
+其余 31 个分三类：
+
+| 类别 | 数量 | 缺什么 |
+|---|---|---|
+| 要真窗口 | 19 | `npm install` 后起 Electron（主题、标题栏、IME、UI 像素扫描），或依赖 `@tiptap` / `playwright` |
+| 要额外环境 | 5 | `dist/` 构建产物、`world-bible.json` 设定库、或联网下载字体 |
+| 目前是红的 | 7 | 判据自身过时或断言没跟上代码改动，不是运行环境问题 |
+
+**模型层与检索层的离线评测**在仓库根目录，三个脚本都需要自备 `world-bible.json`（设定库含作品正文，不进仓库）：
+
+| 脚本 | 测什么 |
+|---|---|
+| `run-verify.js` | 本地模型能否稳定产出合法 tool call，按「合法率 ≥80% 通过」判定；`--probe` 只探服务、单次调用 |
+| `test-mock.js` | 用可编程假模型驱动同一套清洗 / 校验 / 重试 / 降级逻辑，断言 16 类异常分支 |
+| `eval-retrieval.js` | 检索层命中数与上下文占用，给出改前 / 改后的量化对比 |
+
+`world-bible.json` 的结构见 `run-verify.js` 的 `loadWorld`：顶层 `{"entries": [...]}`，条目字段 `project / name / type / note / aliases`，`type` 取 `character|faction|technique|location|plot`。
 
 ---
 
@@ -172,6 +210,8 @@ node test-scope-guard.js         # 范围守卫
 - **不做自动更新**（未签名 exe 会被 SmartScreen 拦在下载阶段，体验比"手动下载"更差）
 - **多人协作、云同步**：不做，也不打算做
 - 上下文压缩是启发式的（按段落 / 摘要裁），不是语义检索
+- **判据不是全部即插即跑**：70 个里 39 个零依赖，其余要 npm 包、构建产物或本地设定库
+- **7 个判据目前是红的**：属判据过时或断言未跟上代码，不是环境问题。绿灯数会随代码改动漂移，别当成「测试全过」的证据
 
 ---
 
