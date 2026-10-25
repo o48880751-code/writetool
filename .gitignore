@@ -48,6 +48,8 @@ app/wt_109/
 *.log
 .tmp/
 tmp/
+.tmp-shot/
+*.tmp-shot/
 
 # ---------- 编辑器 / 系统 ----------
 .vscode/

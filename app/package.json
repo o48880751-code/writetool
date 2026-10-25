@@ -98,8 +98,21 @@
       "category": "public.app-category.productivity"
     }
   },
-  "keywords": [],
-  "author": "WriteTool",
+  "keywords": [
+    "electron",
+    "react",
+    "tiptap",
+    "sqlite",
+    "llm",
+    "agent",
+    "ollama",
+    "openai",
+    "desktop-app",
+    "novel-writing",
+    "context-engineering",
+    "long-form"
+  ],
+  "author": "o48880751-code",
   "license": "MIT",
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -119,7 +132,14 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
-  "homepage": "https://github.com/writetool/writetool",
+  "homepage": "https://github.com/o48880751-code/writetool#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/o48880751-code/writetool.git"
+  },
+  "bugs": {
+    "url": "https://github.com/o48880751-code/writetool/issues"
+  },
   "copyright": "MIT License",
   "productName": "WriteTool"
 }
