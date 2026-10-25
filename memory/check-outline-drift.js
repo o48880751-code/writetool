@@ -28,11 +28,12 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { parseRealm } = require('./drift-rules.js');
 
-const SRC = 'C:/Users/26775/AI写小说/墨染仙途/小说资料';
+const SRC = path.join(os.homedir(), 'AI写小说', '墨染仙途', '小说资料');
 
 const NEGATION = /(不突破|不破|未突破|不达|尚未|推至|留待|待重设|推迟|不破合体)/;
 

@@ -227,7 +227,7 @@ module.exports.run = function run(ctx) {
   });
 
   check('★ 真读一份用户的 SKILL.md 验证全链路', () => {
-    const p = 'C:/Users/26775/Desktop/novel-writer-adapted/SKILL.md';
+    const p = path.join(os.homedir(), 'Desktop', 'novel-writer-adapted', 'SKILL.md');
     if (!fs.existsSync(p)) return;   // 用户还没放到那个位置，跳过
     const raw = fs.readFileSync(p, 'utf8');
     const v = F.validate(raw);
@@ -238,7 +238,7 @@ module.exports.run = function run(ctx) {
     assert(parsed.body.length > 500, '正文太短，撑不起一个技能');
     // 文件里提到的 references 必须真的存在
     if (parsed.body.includes('references/templates.md')) {
-      const ref = 'C:/Users/26775/Desktop/novel-writer-adapted/references/templates.md';
+      const ref = path.join(os.homedir(), 'Desktop', 'novel-writer-adapted', 'references', 'templates.md');
       assert(fs.existsSync(ref),
         '正文里提到 references/templates.md，但文件不存在 —— '
         + '模型会照着去找然后失败');

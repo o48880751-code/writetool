@@ -28,7 +28,7 @@ const { applyStateAfterCommit, deriveStateChanges, extractEntities } = require('
 const { detectDrift, parseRealm } = require('./drift-rules.js');
 const { discoverAliases } = require('./alias-discovery.js');
 
-const NOVEL_DIR = 'C:/Users/26775/AI写小说/墨染仙途';
+const NOVEL_DIR = path.join(os.homedir(), 'AI写小说', '墨染仙途');
 const DB = path.join(__dirname, '..', 'data', 'modianditu.db');
 const PID = 'modianditu';
 

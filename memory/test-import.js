@@ -14,7 +14,7 @@ const path = require('node:path');
 
 const { importModianditu, parseProfiles, parseHeadings, isRealEntity } = require('./import-modianditu.js');
 
-const SRC = 'C:/Users/26775/AI写小说/墨染仙途/小说资料';
+const SRC = path.join(os.homedir(), 'AI写小说', '墨染仙途', '小说资料');
 
 let passed = 0;
 let failed = 0;

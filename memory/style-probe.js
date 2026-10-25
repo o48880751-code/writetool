@@ -16,11 +16,12 @@
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { body, sentences, paragraphs } = require('./probe-flavor');
 
 const ROOT = path.resolve(__dirname, '..');
-const REAL = 'C:/Users/26775/AI写小说/墨染仙途/章节内容/第一章.md';
+const REAL = path.join(os.homedir(), 'AI写小说', '墨染仙途', '章节内容', '第一章.md');
 const GEN_DIR = path.join(ROOT, '结果', 'chapters');
 
 /**

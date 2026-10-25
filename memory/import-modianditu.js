@@ -22,6 +22,7 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { Store } = require('../db/store.js');
@@ -459,7 +460,7 @@ module.exports = { importModianditu, parseProfiles, parseHeadings, isRealEntity,
 // ---- CLI ----
 if (require.main === module) {
   const src = process.argv[2]
-    || 'C:/Users/26775/AI写小说/墨染仙途/小说资料';
+    || path.join(os.homedir(), 'AI写小说', '墨染仙途', '小说资料');
   const db = process.argv[3]
     || path.join(__dirname, '..', 'data', 'modianditu.db');
 

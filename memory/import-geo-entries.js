@@ -24,11 +24,12 @@
  */
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { Store } = require('../db/store.js');
 
-const SRC = 'C:/Users/26775/AI写小说/墨染仙途/小说资料';
+const SRC = path.join(os.homedir(), 'AI写小说', '墨染仙途', '小说资料');
 const PID = 'modianditu';
 
 /** 地名后缀表：命中即认为是候选地名 */
