@@ -6,8 +6,8 @@
 
 > 数据全部留在本机。模型可以接云端 API，也可以接本地 Ollama。
 
-<!-- 截图放在 app/shots/ 下 -->
-![主界面：左侧对话，右侧章节编辑器](app/shots/main-ui.png)
+<!-- 图源走 jsDelivr：raw.githubusercontent.com 在国内经常 502，相对路径会挂成空白 -->
+![主界面：左侧对话，右侧章节编辑器](https://gcore.jsdelivr.net/gh/o48880751-code/writetool@main/app/shots/main-ui.png)
 
 **169** 个源码文件 · **6.6 万** 行代码 · **70** 个判据文件（50 个零依赖，clone 下来直接跑） · 无后端服务
 
