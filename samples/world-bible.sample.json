@@ -1,0 +1,145 @@
+{
+  "_readme": "示例设定库，供离线评测使用。run-verify.js / test-mock.js / eval-retrieval.js / db/test-db.js 在找不到 world-bible.json 时会自动回落到本文件。这是为了让仓库 clone 下来即可跑通判据而造的合成数据，不是任何真实作品的设定：2 个项目、20 条条目，覆盖 character / faction / technique / location / plot 五种类型，并刻意保留了两处检索层需要的行为——① 乱葬岗 的别名「岗子」用于测别名命中；② novel-demo-02 的 悬风钟 带别名「铜钟」，用于测「青铜钟」这类陌生词会不会被子串误命中。用自己的设定库请按同样结构写在仓库根目录 world-bible.json（该文件已被 .gitignore 排除）。",
+  "entries": [
+    {
+      "project": "novel-demo-01",
+      "name": "谢九",
+      "type": "character",
+      "aliases": ["小九"],
+      "note": "主角。被赤霄宗拒于山门外三年，靠替人验尸、抄碑文过活，身上带着宗主旧伤的线索。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "洛三娘",
+      "type": "character",
+      "aliases": ["三娘"],
+      "note": "乱葬岗的守尸人。左手三根指骨是断的，所以提灯笼只用右手。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "铁棺",
+      "type": "plot",
+      "aliases": [],
+      "note": "乱葬岗北侧钉在土里的一口旧棺，棺身铭文与赤霄宗剑诀同源，是本卷的核心伏笔。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "乱葬岗",
+      "type": "location",
+      "aliases": ["岗子"],
+      "note": "洛阳城北的义地，秋雨一到整片泡成泥黑，白天无人、夜里只有守尸人的灯笼。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "赤霄宗",
+      "type": "faction",
+      "aliases": ["赤霄"],
+      "note": "剑修宗门，山门在洛阳以北。每逢拒客便鸣钟七下，谢九听了三年。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "剑冢",
+      "type": "location",
+      "aliases": [],
+      "note": "赤霄宗后山的埋剑地，断剑按入门年份插成七排，最里一排无铭。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "赤霄剑诀",
+      "type": "technique",
+      "aliases": ["剑诀"],
+      "note": "赤霄宗入门剑诀。全诀刻在山门内壁，共三百二十四字，末十二字被凿去。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "归字棺钉",
+      "type": "plot",
+      "aliases": [],
+      "note": "铁棺北侧第三根棺钉，钉头刻一个「归」字，与山门内壁被凿去的铭文笔势一致。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "洛阳",
+      "type": "location",
+      "aliases": ["洛城"],
+      "note": "故事起点。城中按坊分治，南市收旧铁，北市收旧纸。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "寒鸦卫",
+      "type": "faction",
+      "aliases": ["鸦卫"],
+      "note": "洛阳府衙下的缉查队伍，着黑羽斗篷，专管城外的无籍尸案。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "玄铁令",
+      "type": "plot",
+      "aliases": ["铁令"],
+      "note": "谢九身上唯一从宗门带出来的东西，正面铸山门纹，背面空白。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "断魂散",
+      "type": "technique",
+      "aliases": [],
+      "note": "验尸人常用的药粉，撒在伤口可辨生前伤与死后伤，用量过重会毁掉创口。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "落霞渡",
+      "type": "location",
+      "aliases": ["渡口"],
+      "note": "洛阳东出水路的旧渡口，秋汛后水位下落，露出半截石阶。"
+    },
+    {
+      "project": "novel-demo-01",
+      "name": "第七下钟声",
+      "type": "plot",
+      "aliases": [],
+      "note": "赤霄宗拒客钟只敲七下。谢九听出第七下里有一线裂缝，暗示钟体已伤。"
+    },
+    {
+      "project": "novel-demo-02",
+      "name": "凛江月",
+      "type": "character",
+      "aliases": ["江月"],
+      "note": "海崖一脉的持剑人。左手持谱，右手持剑，缺页的残月剑谱由她保管。"
+    },
+    {
+      "project": "novel-demo-02",
+      "name": "见岢坛",
+      "type": "location",
+      "aliases": [],
+      "note": "海崖上的旧祭坛。退潮后可从礁盘直接走上坛殿，涨潮时四面皆水。"
+    },
+    {
+      "project": "novel-demo-02",
+      "name": "悬风钟",
+      "type": "plot",
+      "aliases": ["铜钟"],
+      "note": "坛殿悬着的一口无舌钟，海风穿殿即自鸣，钟身没有铭文。"
+    },
+    {
+      "project": "novel-demo-02",
+      "name": "残月剑谱",
+      "type": "technique",
+      "aliases": ["剑谱"],
+      "note": "海崖一脉的剑谱，缺了中间三页，缺页处只剩剑势的起手。"
+    },
+    {
+      "project": "novel-demo-02",
+      "name": "守焰",
+      "type": "character",
+      "aliases": ["哑守"],
+      "note": "见岢坛的守坛人，不开口说话，靠敲钟的次数与人交谈。"
+    },
+    {
+      "project": "novel-demo-02",
+      "name": "潮生诀",
+      "type": "technique",
+      "aliases": [],
+      "note": "海崖一脉的吐纳法，按潮汐起落定呼吸，退潮时练气、涨潮时练息。"
+    }
+  ]
+}

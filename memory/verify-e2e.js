@@ -38,7 +38,7 @@ async function main() {
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mem-e2e-'));
   const store = new Store(path.join(tmp, 'e2e.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(V.resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');

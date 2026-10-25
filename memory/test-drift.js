@@ -10,6 +10,7 @@
 
 const assert = require('assert');
 const { detectDrift, ORDINALS, parseRealm } = require('./drift-rules.js');
+const { resolveWorldPath } = require('../run-verify.js');
 
 let passed = 0;
 let failed = 0;
@@ -220,7 +221,7 @@ check('位置轨迹累积且去重连续重复', () => {
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'drift-hist-'));
   const store = new Store(path.join(tmp, 'h.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');

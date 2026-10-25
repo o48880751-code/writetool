@@ -12,6 +12,7 @@ const assert = require('assert');
 const { ContextBudget, summarizeBible, estimateTokens } = require('./context-budget.js');
 const { extractEntities, resolveLocation, detectDrift, deriveStateChanges, applyStateAfterCommit } = require('./state-writer.js');
 const { Store } = require('../db/store.js');
+const { resolveWorldPath } = require('../run-verify.js');
 
 let passed = 0;
 let failed = 0;
@@ -389,7 +390,7 @@ check('有冲突时不写入污染状态表', () => {
 check('端到端：写入 SQLite 并可读回', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-mem-'));
   const store = new Store(path.join(tmp, 'm.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');
@@ -411,7 +412,7 @@ check('端到端：写入 SQLite 并可读回', () => {
 check('端到端：冲突时不污染已落库状态', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-mem2-'));
   const store = new Store(path.join(tmp, 'm.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');
@@ -447,7 +448,7 @@ check('端到端：冲突时不污染已落库状态', () => {
 check('端到端：真漂移时状态表保持不变（2700章的关键性质）', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-mem3-'));
   const store = new Store(path.join(tmp, 'm3.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');
@@ -490,7 +491,7 @@ check('端到端：真漂移时状态表保持不变（2700章的关键性质）
 check('端到端：正常推进时轨迹累积（长篇连续性）', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-mem4-'));
   const store = new Store(path.join(tmp, 'm4.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');
@@ -600,7 +601,7 @@ check('正文完全无关时不产生建议', () => {
 check('别名发现需人工确认才写入（不自动改设定库）', () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'st-alias-'));
   const store = new Store(path.join(tmp, 'a.db'));
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const settings = store.loadSettings('novel-demo-01');

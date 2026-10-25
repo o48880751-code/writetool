@@ -7,7 +7,7 @@
 <!-- 截图放在 app/shots/ 下 -->
 ![主界面：左侧对话，右侧章节编辑器](app/shots/main-ui.png)
 
-**168** 个源码文件 · **6.6 万** 行代码 · **70** 个判据文件（39 个零依赖，clone 下来直接跑） · 无后端服务
+**168** 个源码文件 · **6.6 万** 行代码 · **70** 个判据文件（43 个零依赖，clone 下来直接跑） · 无后端服务
 
 ---
 
@@ -102,9 +102,11 @@ npm run package
 ## 目录结构
 
 ```
-├── run-verify.js             本地模型 Tool Calling 可行性验证（需自备 world-bible.json）
-├── test-mock.js              编排层离线自测：可编程假模型驱动，16 类异常分支
+├── run-verify.js             本地模型 Tool Calling 可行性验证（需本地 Ollama）
+├── test-mock.js              编排层离线自测：可编程假模型驱动，27 个用例覆盖 16 类异常分支
 ├── eval-retrieval.js         检索层离线评测：质量与上下文成本，改前/改后对比
+├── samples/
+│   └── world-bible.sample.json  示例设定库（2 个项目 / 20 条合成条目，离线脚本默认用它）
 │
 ├── app/                      桌面应用主体
 │   ├── electron/             主进程（Node 环境，能碰文件和网络）
@@ -146,25 +148,32 @@ node test-agent-loop.js     # 工具循环：22 通过 / 0 失败
 node test-auto-save.js      # 自动落盘：48 条
 ```
 
-70 个判据文件里 **39 个零依赖**，clone 下来不装任何东西就能跑，覆盖工具协议、审批闸门、上下文预算、数据迁移、范围守卫、空响应处理这些核心逻辑。
+70 个判据文件里 **43 个零依赖**，clone 下来不装任何东西就能跑，覆盖工具协议、审批闸门、上下文预算、数据迁移、范围守卫、空响应处理这些核心逻辑。
 
-其余 31 个分三类：
+其余 27 个分三类：
 
 | 类别 | 数量 | 缺什么 |
 |---|---|---|
-| 要真窗口 | 19 | `npm install` 后起 Electron（主题、标题栏、IME、UI 像素扫描），或依赖 `@tiptap` / `playwright` |
-| 要额外环境 | 5 | `dist/` 构建产物、`world-bible.json` 设定库、或联网下载字体 |
-| 目前是红的 | 7 | 判据自身过时或断言没跟上代码改动，不是运行环境问题 |
+| 要 `npm install` | 19 | Electron 真窗口（16 个：主题、标题栏、IME、UI 像素扫描）、`@tiptap/pm/model`（2 个）、`playwright`（1 个） |
+| 要额外环境 | 3 | 本地 Ollama 服务、`dist/` 构建产物、联网下载字体 |
+| 代码或判据自身有问题 | 5 | `test-distill` 指向已下线的组件、`test-tdz`（App.jsx 的 TDZ）、`test-skill-content`（内置技能正文超预算）、`test-main-boot`、`test-packaging` |
 
-**模型层与检索层的离线评测**在仓库根目录，三个脚本都需要自备 `world-bible.json`（设定库含作品正文，不进仓库）：
+**模型层、检索层、数据层的离线评测**不需要模型，也不需要你准备数据——仓库带了一份示例设定库 [`samples/world-bible.sample.json`](samples/world-bible.sample.json)，脚本找不到真实设定库时自动回落到它：
 
-| 脚本 | 测什么 |
-|---|---|
-| `run-verify.js` | 本地模型能否稳定产出合法 tool call，按「合法率 ≥80% 通过」判定；`--probe` 只探服务、单次调用 |
-| `test-mock.js` | 用可编程假模型驱动同一套清洗 / 校验 / 重试 / 降级逻辑，断言 16 类异常分支 |
-| `eval-retrieval.js` | 检索层命中数与上下文占用，给出改前 / 改后的量化对比 |
+```bash
+node test-mock.js        # 编排层 27 个用例
+node eval-retrieval.js   # 检索层改前/改后对比表
+node db/test-db.js       # 数据层 58 项（Node 22 内置 node:sqlite，不用装包）
+```
 
-`world-bible.json` 的结构见 `run-verify.js` 的 `loadWorld`：顶层 `{"entries": [...]}`，条目字段 `project / name / type / note / aliases`，`type` 取 `character|faction|technique|location|plot`。
+| 脚本 | 依赖 | 测什么 |
+|---|---|---|
+| `test-mock.js` | 无 | 用可编程假模型驱动同一套清洗 / 校验 / 重试 / 降级逻辑，断言 16 类异常分支 |
+| `eval-retrieval.js` | 无 | 检索层命中数与上下文占用，给出改前 / 改后的量化对比 |
+| `db/test-db.js` | 无 | SQLite 版检索行为必须与内存版逐项一致，否则前面所有实测数据作废 |
+| `run-verify.js` | Ollama | 本地模型能否稳定产出合法 tool call，按「合法率 ≥80% 通过」判定；`--probe` 只探服务、单次调用 |
+
+**换成自己的设定库**：在仓库根目录放一个 `world-bible.json` 即可，脚本优先用它（这个文件名已在 `.gitignore` 里，不会误传）。结构见 `run-verify.js` 的 `resolveWorldPath`：顶层 `{"entries": [...]}`，条目字段 `project / name / type / note / aliases`，`type` 取 `character|faction|technique|location|plot`。示例库刻意保留了两处检索层需要的行为——`乱葬岗` 带别名「岗子」用来测别名命中，`novel-demo-02` 的 `悬风钟` 带别名「铜钟」用来测 `青铜钟` 这类陌生词会不会被子串误命中。
 
 ---
 
@@ -210,7 +219,7 @@ node test-scope-guard.js         # 范围守卫
 - **不做自动更新**（未签名 exe 会被 SmartScreen 拦在下载阶段，体验比"手动下载"更差）
 - **多人协作、云同步**：不做，也不打算做
 - 上下文压缩是启发式的（按段落 / 摘要裁），不是语义检索
-- **判据不是全部即插即跑**：70 个里 39 个零依赖，其余要 npm 包、构建产物或本地设定库
+- **判据不是全部即插即跑**：70 个里 43 个零依赖，其余要 npm 包或构建产物
 - **7 个判据目前是红的**：属判据过时或断言未跟上代码，不是环境问题。绿灯数会随代码改动漂移，别当成「测试全过」的证据
 
 ---

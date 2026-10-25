@@ -17,7 +17,7 @@ const path = require('node:path');
 const { buildProfile, checkStyle, styleDirective, measure } = require('./style');
 const { makeToolImpl, loadWorld } = require('../run-verify.js');
 
-const REAL_CHAPTER = 'C:/Users/26775/AI写小说/墨染仙途/章节内容/第一章.md';
+const REAL_CHAPTER = path.join(os.homedir(), 'AI写小说', '墨染仙途', '章节内容', '第一章.md');
 const ROOT = path.resolve(__dirname, '..');
 
 let pass = 0, fail = 0;
@@ -85,7 +85,7 @@ async function main() {
       console.log('  ⚠ 没有可用模型，跳过生成环节');
     } else {
       console.log(`\n【5】真实模型生成 + 风格检测（${model}）`);
-      const world = loadWorld(path.join(ROOT, 'world-bible.json'));
+      const world = loadWorld();
       // makeToolImpl(world, store) —— store 会被 writeSegment 写入 segments，不能传 null
       const store = { chapters: [], segments: [] };
       const tmpDir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'wt-style-'));

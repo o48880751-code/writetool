@@ -50,7 +50,7 @@ async function main() {
 
   // 从 world-bible.json 导入，再从 SQLite 读回给 Agent 用——
   // 这是关键的一步：Agent 拿到的 world 数组来自数据库，不是文件。
-  store.importWorldBible(path.join(__dirname, '..', 'world-bible.json'), (pid) => {
+  store.importWorldBible(V.resolveWorldPath(), (pid) => {
     store.createProject({ id: pid, name: `项目 ${pid}` });
   });
   const worldFromDb = store.loadAllSettings();

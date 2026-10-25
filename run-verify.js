@@ -131,9 +131,30 @@ const SEED_CONTENT =
  * ------------------------------------------------------------------ */
 
 const WORLD_PATH = path.join(__dirname, 'world-bible.json');
+const WORLD_SAMPLE_PATH = path.join(__dirname, 'samples', 'world-bible.sample.json');
+
+/**
+ * 解析设定库路径。
+ *
+ * 显式传入的路径按原样使用（找不到就抛错，不掩盖问题）；不传时先找仓库根目录的
+ * world-bible.json，没有则回落到 samples/world-bible.sample.json。
+ * 真实设定库含作品正文，只在本机存在、由 .gitignore 排除，所以对外公开的只有示例库。
+ */
+function resolveWorldPath(p) {
+  if (p) return p;
+  if (fs.existsSync(WORLD_PATH)) return WORLD_PATH;
+  if (fs.existsSync(WORLD_SAMPLE_PATH)) {
+    if (!resolveWorldPath.noticed) {
+      resolveWorldPath.noticed = true;
+      console.warn('提示：未找到 world-bible.json，改用示例设定库 samples/world-bible.sample.json（2 项目 20 条合成条目）。');
+    }
+    return WORLD_SAMPLE_PATH;
+  }
+  throw new Error(`找不到设定库：既没有 ${WORLD_PATH}，也没有示例库 ${WORLD_SAMPLE_PATH}`);
+}
 
 function loadWorld(p) {
-  const raw = JSON.parse(fs.readFileSync(p || WORLD_PATH, 'utf8'));
+  const raw = JSON.parse(fs.readFileSync(resolveWorldPath(p), 'utf8'));
   return raw.entries || raw;
 }
 
@@ -1711,6 +1732,7 @@ module.exports = {
   validateSchema,
   extractJsonCandidates,
   loadWorld,
+  resolveWorldPath,
   makeToolImpl,
   fidelity,
   buildReport,

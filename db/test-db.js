@@ -15,9 +15,10 @@ const assert = require('assert');
 
 const { Store, normalizeSkillPath } = require('./store.js');
 const ROOT = path.resolve(__dirname, '..');
-const { makeToolImpl, scoreEntry, QUERY_TOP_K, norm } = require('../run-verify.js');
+const { makeToolImpl, scoreEntry, QUERY_TOP_K, norm, resolveWorldPath } = require('../run-verify.js');
 
-const WORLD_JSON = path.join(__dirname, '..', 'world-bible.json');
+// 有 world-bible.json 用它，没有就用 samples/ 下的示例库（详见 run-verify.js 的 resolveWorldPath）
+const WORLD_JSON = resolveWorldPath();
 
 let passed = 0;
 let failed = 0;
@@ -458,16 +459,16 @@ function main() {
 
   check('★ 两个目录式内置技能装上了，且配套文件也入库', () => {
     const list = store.listSkills(P1);
-    const nw = list.find((s) => s.name === '小说写作助手');
+    const nw = list.find((s) => s.name === '写新章节');   // 原名「小说写作助手」，2026-10 改名
     const sc = list.find((s) => s.name === '技能创建助手');
-    assert(nw, '小说写作助手没装上');
+    assert(nw, '写新章节（sk-novel-writer）没装上');
     assert(sc, '技能创建助手没装上');
     // ⚠ 正文要够长才说明真的读到了 SKILL.md（单条提示词只有三十来字）
     assert(nw.prompt_content.length > 800,
       `正文只有 ${nw.prompt_content.length} 字 —— 读到的可能是占位内容`);
     // 配套文件必须在库里
     const files = store.listSkillFiles(nw.id);
-    assert(files.length >= 1, '小说写作助手的 references 没入库');
+    assert(files.length >= 1, '写新章节的 references 没入库');
     assert(files.some((f) => f.path === 'references/templates.md'),
       `references/templates.md 不在库里：${JSON.stringify(files.map(f=>f.path))}`);
     // ⚠ 正文里提到的配套文件必须真的存在。
