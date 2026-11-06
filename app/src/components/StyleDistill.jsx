@@ -272,7 +272,7 @@ export default function StyleDistill({ projectId, tree, onClose, onToast }) {
             onClick={run}
             disabled={!!busy || over}
             className="w-full py-2 rounded text-[13px] disabled:opacity-40"
-            style={{ background: 'var(--accent)', color: '#fff' }}
+            style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
           >
             {busy ? '正在学…' : '开始蒸馏'}
           </button>
@@ -301,7 +301,7 @@ export default function StyleDistill({ projectId, tree, onClose, onToast }) {
                 </div>
               ) : (
                 <button onClick={save} className="w-full py-2 rounded text-[13px]"
-                        style={{ background: 'var(--accent)', color: '#fff' }}>
+                        style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}>
                   存进我的自定义技能
                 </button>
               )}

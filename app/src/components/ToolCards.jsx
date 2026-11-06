@@ -25,6 +25,16 @@ const TOOL_META = {
   terminal: { icon: '⌘', label: '终端' },
   web_search: { icon: '🔍', label: '联网搜索' },
   web_fetch: { icon: '📄', label: '读取网页' },
+  /**
+   * ⚠ 下面这几个是 2026-10-29 补的 —— 之前只有上面三条，
+   * 于是「读文件 / 写文件 / 列目录」在卡片上显示成 `🔧 read_file`（英文）。
+   * 竞品的卡片是中文的（「读取: 第一章.md」），一眼就知道在干什么；
+   * 英文工具名对写小说的用户没有任何信息量。
+   */
+  read_file: { icon: '📖', label: '读取文件' },
+  write_note: { icon: '✏️', label: '写入文件' },
+  list_files: { icon: '📁', label: '列出目录' },
+  delete_file: { icon: '🗑', label: '删除文件' },
 };
 
 /** 模型给了不认识的工具名时不要显示成空白 */
@@ -59,37 +69,36 @@ export function ToolCallCard({ item }) {
     : '完成';
 
   return (
-    <div
-      className="text-[11.5px] rounded px-2.5 py-1.5"
-      style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}
-    >
+    /**
+     * ⚠ 2026-11-05 重做视觉：原来是 4px 圆角 + 1px 边框 + 11.5px 字，
+     *   截图里是一排灰色方块，跟界面其它卡片不是一套。
+     *   现在交给 `.tool-card`：12px 圆角、无边框、按 ink 算的浅底，
+     *   悬停才浮出一条极淡的边（苹果那套是"没有框，只有层次"）。
+     */
+    <div className="tool-card text-[12px]" data-testid={`tool-card-box-${item.id}`}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-2 text-left"
+        className="w-full flex items-center gap-2.5 text-left"
         style={{ color: 'var(--ink)' }}
         data-testid={`tool-card-${item.id}`}
       >
-        <span style={{ color }}>{running ? '◌' : blocked || failed ? '✕' : '✓'}</span>
-        <span>{m.icon}</span>
-        <span className="font-medium shrink-0">{m.label}</span>
+        <span className="tool-check" style={{ color }}>{running ? '◌' : blocked || failed ? '✕' : '✓'}</span>
+        <span className="text-[12.5px] leading-none">{m.icon}</span>
+        <span className="text-[12px] font-semibold shrink-0 tracking-[-.01em]">{m.label}</span>
         <span
-          className="flex-1 truncate"
+          className="flex-1 truncate text-[11.5px]"
           style={{ color: 'var(--ink-soft)', fontFamily: 'ui-monospace, Consolas, monospace' }}
         >
           {item.brief || '（空）'}
         </span>
-        <span className="shrink-0" style={{ color }}>{tag}</span>
-        <span style={{ color: 'var(--ink-soft)' }}>{open ? '▾' : '▸'}</span>
+        <span className="shrink-0 text-[11px]" style={{ color, fontWeight: 550 }}>{tag}</span>
+        <span className="text-[10px]" style={{ color: 'var(--ink-soft)', opacity: .8 }}>{open ? '▾' : '▸'}</span>
       </button>
 
       {open && (
         <pre
-          className="mt-1.5 p-2 rounded text-[11px] leading-relaxed whitespace-pre-wrap break-all max-h-56 overflow-y-auto"
-          style={{
-            background: 'var(--paper)',
-            color: 'var(--ink-soft)',
-            border: '1px solid var(--line)',
-          }}
+          className="tool-out mt-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all max-h-56 overflow-y-auto"
+          style={{ color: 'var(--ink-soft)' }}
         >
           {item.output || (running ? '正在执行…' : '（没有输出）')}
         </pre>
@@ -128,6 +137,71 @@ export function ToolCallList({ items }) {
  *
  * @param onDecide (allow:boolean)=>void
  */
+/**
+ * 生成结束后的一行摘要（2026-10-30）。
+ *
+ * ## 为什么不是"直接清空"
+ *
+ * 清空之后用户回头翻记录，只看到一段回答，**不知道它读了哪些文件、
+ * 有没有写盘**。而全平铺又太吵：拆一章会调十几次工具，
+ * 十几行「完成」把正文顶出屏幕，一屏全是执行记录。
+ *
+ * 所以：**一行摘要（可展开）**。默认只占一行，想核对细节点开就有。
+ *
+ * ## 为什么按工具分类计数，而不是只写"执行了 N 步"
+ *
+ * 「执行了 13 步」看不出干了什么；「读资料 6 · 读文件 1 · 写文件 1」
+ * 一眼就知道这轮在干什么，也不占宽度。
+ */
+const SUMMARY_LABELS = {
+  read_reference: '读取资料',
+  read_file: '读文件',
+  write_note: '写文件',
+  list_files: '列目录',
+  delete_file: '删除',
+  terminal: '终端',
+  web_search: '联网',
+  web_fetch: '抓网页',
+};
+
+export function ToolCallsSummary({ items, onExpand }) {
+  if (!items || !items.length) return null;
+  const failed = items.filter((t) => t.status === 'failed').length;
+
+  const counts = {};
+  for (const t of items) counts[t.name] = (counts[t.name] || 0) + 1;
+
+  // 按固定顺序输出，避免同一批调用因为顺序不同而显示不一致
+  const parts = Object.keys(SUMMARY_LABELS)
+    .filter((k) => counts[k])
+    .map((k) => `${SUMMARY_LABELS[k]} ${counts[k]}`);
+  // 认不出的工具名也要计数，不能吞掉
+  for (const k of Object.keys(counts)) {
+    if (!SUMMARY_LABELS[k]) parts.push(`${k} ${counts[k]}`);
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      className="tool-summary w-full flex items-center gap-2 text-[11.5px] text-left"
+      style={{ color: 'var(--ink-soft)' }}
+      title="展开看每一步做了什么"
+      data-testid="tool-calls-summary"
+    >
+      <span className="shrink-0">⚙</span>
+      <span className="shrink-0" style={{ color: 'var(--ink)' }}>
+        执行了 {items.length} 步
+      </span>
+      <span className="truncate flex-1">{parts.join(' · ')}</span>
+      {failed > 0 && (
+        <span className="shrink-0" style={{ color: 'var(--danger)' }}>{failed} 个失败</span>
+      )}
+      <span className="shrink-0">展开 ▾</span>
+    </button>
+  );
+}
+
 export function ToolApprovalModal({ request, onDecide }) {
   const [key, setKey] = useState(null);
 
@@ -233,7 +307,7 @@ export function ToolApprovalModal({ request, onDecide }) {
           <button
             onClick={() => decide(true)}
             className="px-4 py-1.5 rounded text-[12.5px]"
-            style={{ background: 'var(--danger)', color: '#fff' }}
+            style={{ background: 'var(--danger)', color: 'var(--danger-ink)' }}
             data-testid="tool-approval-allow"
           >
             这一次允许

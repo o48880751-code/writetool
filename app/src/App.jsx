@@ -5,21 +5,30 @@ import ChatPanel from './components/ChatPanel.jsx';
 import FileBox from './components/FileBox.jsx';
 import EditorSurface from './components/EditorSurface.jsx';
 import SplitPanes from './components/SplitPanes.jsx';
+import Bookshelf from './components/Bookshelf.jsx';
 import MainWorkspace from './components/MainWorkspace.jsx';
 import DocPreview from './components/DocPreview.jsx';
+import ChapterPicker from './components/ChapterPicker.jsx';
+import BookAnalyzer from './components/BookAnalyzer.jsx';
 import FileTree from './components/FileTree.jsx';
 import StyleDistill from './components/StyleDistill.jsx';
 import IntroGen from './components/IntroGen.jsx';
+import ToolModal from './components/ToolModal.jsx';
+/** 品牌图标：由 make-icon.js 生成，和 exe / 启动动画同一份 */
+import brandLogo from './assets/logo.svg';
+import CoverModal from './components/CoverModal.jsx';
 import ToolsPanel from './components/ToolsPanel.jsx';
 import SettingsPage from './components/SettingsPage.jsx';
 import TrashModal from './components/TrashModal.jsx';
 import ProjectSwitcher from './components/ProjectSwitcher.jsx';
 import { ToolApprovalModal } from './components/ToolCards.jsx';
 import AgreementModal from './components/AgreementModal.jsx';
-import { THEMES, DEFAULT_THEME, applyTheme, isValidTheme } from './themes.js';
+import { GuideModal } from './components/Welcome.jsx';
+import { DEFAULT_MODE, applyTheme, isValidMode, systemPrefersDark } from './themes.js';
 import { thinkLevelsOf, normalizeLevel } from './think-levels.js';
 import { useBootstrapFonts } from './lib/fonts.js';
 import { playChime } from './lib/chime.js';
+import { Icon } from './components/Icons.jsx';
 
 /**
  * 顶栏「卡片开关」能收起的栏。
@@ -28,6 +37,27 @@ import { playChime } from './lib/chime.js';
  * 它们是「自己写」的地盘，收起就没东西可看了。
  */
 const CARD_PANES = ['conversations', 'main'];
+
+/**
+ * 把模型/网络的原始报错翻成用户能照着做的一句话（2026-11-05）。
+ *
+ * ⚠ 羽毛菌的原话：「如果 ai 不稳定应该直接回复用户换个 ai」。
+ *   原来直接把 `fetch failed` / `ECONNREFUSED` 甩在红条上，
+ *   用户既不知道发生了什么，也不知道下一步该点哪。
+ */
+function friendlyModelError(msg) {
+  const m = String(msg || '');
+  if (/ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|network|socket|timeout|HTTP (?:5\d\d)|502|503|504/i.test(m)) {
+    return `连不上模型（${m}）。换一个模型或服务商再发一次；刚才那条已经留在对话里，不用重打。`;
+  }
+  if (/401|403|invalid.*key|api.?key/i.test(m)) {
+    return `这个模型的密钥不对或已失效（${m}）。去设置里换一条连接，再重发。`;
+  }
+  if (/429|rate.?limit|quota/i.test(m)) {
+    return `这家服务商限流了（${m}）。等一会儿，或换一个模型再发。`;
+  }
+  return m;
+}
 
 /**
  * 主界面：对话优先布局。
@@ -58,9 +88,72 @@ const CARD_PANES = ['conversations', 'main'];
  */
 export default function App() {
   const [config, setConfig] = useState(null);
+
+  /**
+   * 新版本提示（2026-10-29）。
+   *
+   * ⚠ 只提示、不自动更新：安装包没签名，自动下载的 exe 会被 SmartScreen 拦。
+   * ⚠ 拉取失败一律静默 —— 没网的用户不该因为"检查版本"看到任何报错。
+   * ⚠ 关掉后本次启动不再提示（sessionStorage），但下次开还会提示 ——
+   *   新版本这件事值得反复提，只是不该在同一次使用里反复烦人。
+   */
+  const [updateInfo, setUpdateInfo] = useState(null);
+
+  useEffect(() => {
+    // 3 秒后再查：先让首屏把界面画出来，不要让一次网络请求拖慢启动
+    const timer = setTimeout(async () => {
+      if (sessionStorage.getItem('updateDismissed') === '1') return;
+      try {
+        const r = await window.api.update.check();
+        if (r && r.ok && r.hasUpdate) setUpdateInfo(r);
+      } catch (e) {
+        // 检查失败静默，不给用户看
+      }
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, []);
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(null);
-  const [theme, setTheme] = useState(DEFAULT_THEME);
+
+  /**
+   * 当前这一屏是「书架」还是「编辑器」（2026-11-01 加）。
+   *
+   * ⚠ 初始值**固定是 shelf**：羽毛菌要的是「进入软件先选择项目，
+   *   而不是直接看到编辑聊天页面」。所以哪怕上次退出时停在第 12 章，
+   *   下次打开也先落到书架 —— 由他决定这次写哪本。
+   *
+   * ⚠ 不持久化。持久化的话第二次打开就又是"直接进编辑器"，
+   *   等于把这次改的东西抵消掉。
+   */
+  const [view, setView] = useState('shelf');
+
+  /**
+   * 欢迎页状态（2026-11-05）。
+   *
+   * ⚠ `welcomeMode` 是**算出来的**，不单独存：
+   *   项目还没有对话 → 'first'（新书启航 / 搭建大纲 / 使用教程）；
+   *   已经有对话     → 'returning'（继续写作 / 规划章纲 / 查询冲突）。
+   *   存一份 state 就得在新建对话、删对话、切项目三处同步，漏一处就会
+   *   显示上一本书的按钮。算出来没有这个问题。
+   */
+  const [showGuide, setShowGuide] = useState(false);
+  /** 传给第 4 栏：要展开哪个目录。带 nonce，同一个目录连点两次也能重新展开。 */
+  const [focusDir, setFocusDir] = useState(null);
+  /**
+   * 明暗档位。⚠ 2026-11-01 从「12 套主题平铺」改成「浅色/深色/跟随系统」，
+   * 照 ChatGPT 的 Appearance（羽毛菌原话：不要固定主题，只要能选深浅 + 改底色字色）。
+   */
+  const [mode, setMode] = useState(DEFAULT_MODE);
+
+  /**
+   * 系统当前是不是深色（只给顶部那个一键切换按钮**画图标**用）。
+   *
+   * ⚠ 为什么要单独存一份 state：`mode === 'system'` 时真正的深浅由
+   *   `matchMedia` 决定，而那个变化**不会让 App 重渲染** ——
+   *   下面那个跟随系统的 effect 只调 `applyTheme`（改 CSS 变量），不动 state。
+   *   不存这一份的话，系统白天切深色时界面变了、按钮上的月亮/太阳却不换。
+   */
+  const [sysDark, setSysDark] = useState(() => systemPrefersDark());
 
   /**
    * 启动期把已安装的开源字体的 @font-face 挂上，正文/聊天才能用。
@@ -95,6 +188,49 @@ export default function App() {
    *   用户会以为模型又把刚才那几条命令跑了一遍。
    */
   const [toolCalls, setToolCalls] = useState([]);
+
+  /**
+   * 生成结束后把工具卡片收成一行（2026-10-30）。
+   *
+   * ## 为什么要有这个
+   *
+   * 原来两种做法都不对：
+   *   · 生成结束就清空 → 用户回头翻记录，看不到它读了哪些文件（看不到）
+   *   · 一直平铺     → 文字吐完了，下面还压着十几行「完成」，
+   *                    正文被顶到屏幕外，一屏全是执行记录（太吵）
+   *
+   * 现在：**生成中逐条显示**（能看到它在干嘛），
+   *       **生成完收成一行摘要**（「执行了 13 步 · 读取 6 份资料」），
+   *       想看细节点一下展开。
+   */
+  const [toolsCollapsed, setToolsCollapsed] = useState(false);
+
+  /**
+   * 切项目时清空工具卡片（2026-10-30 加）。
+   *
+   * ⚠ 现场：用户从「试用小说文件」切到新项目「测试哦」，中间栏还开着上一个项目的对话，
+   *   卡片区残留着上一轮的「写文件 1」——他以为这次写了 `设定.md`，
+   *   实际那份文件躺在另一个项目里。
+   *
+   * 工具卡片是**某一轮对话**的产物，换了项目就不再属于当前上下文。
+   */
+  useEffect(() => {
+    setToolCalls([]);
+    setToolsCollapsed(false);
+  }, [projectId]);
+
+  /**
+   * 「同步维护文档」询问（2026-10-29）。
+   *
+   * 模型写完一章之后，`章节摘要.md` / `人物库.md` 很可能已经过时，
+   * 但它不会主动想起来更新。所以生成结束时问一句：
+   *   { paths: ['章节/第二章.md'] }
+   *
+   * ⚠ 只是**问**，不自动改：改摘要和人物库是动用户的长期资料，
+   *   模型很可能改错（把临时角色写进人物库、把一句话扩写成三段），
+   *   而用户不一定会去核对。**要他点头才动**。
+   */
+  const [syncAsk, setSyncAsk] = useState(null);
   /** 待用户决定的危险命令；null = 没有 */
   const [approval, setApproval] = useState(null);
 
@@ -119,6 +255,33 @@ export default function App() {
   const [error, setError] = useState(null);
   const [status, setStatus] = useState('');
   const [lastUserText, setLastUserText] = useState('');   // 失败重试用
+
+  /**
+   * 生成卡死的兜底（2026-10-30 加）。
+   *
+   * ## 现场
+   *
+   * 主进程日志最后一行是「结束 2784ms 正文=64字」，之后再没有新日志；
+   * 而界面一直转圈转了五十多分钟。前后端都查过：`onDone` 第一行就是
+   * `setGenerating(false)`、只注册一次、渲染层没有任何报错 —— **断点找不到**。
+   *
+   * 这种情况下**先保证用户能自己脱身**，再靠主进程那两条 `[done]` 日志定位根因
+   * （见 conv:send 的 onDone）。
+   *
+   * ## 为什么是「5 分钟没有数据」而不是「5 分钟没结束」
+   *
+   * 正常生成每几秒就有一段正文 / 思考 / 工具事件进来，
+   * 这些变化都会重置定时器。**连续 5 分钟一点字节都没收到**，
+   * 才说明这条连接已经没有下文了 —— 长文写十分钟以上也不会被误杀。
+   */
+  useEffect(() => {
+    if (!generating) return undefined;
+    const timer = setTimeout(() => {
+      setGenerating(false);
+      setError('生成似乎中断了（5 分钟没有收到任何数据）。可以重新发送，或点重试。');
+    }, 5 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, [generating, streamingText, streamingThink, toolCalls.length]);
 
   // 引用源
   const [skills, setSkills] = useState([]);
@@ -241,6 +404,11 @@ export default function App() {
   const editorApi = useRef(null);
   const unsubs = useRef([]);
   const convSeq = useRef(0);
+  /**
+   * 最后一次收到模型分片的时间（2026-11-05）。
+   * 用来兜底「正文吐完了、done 却没到」——界面会一直停在「生成中」。
+   */
+  const lastChunkAt = useRef(0);
 
   const bump = () => setRefreshToken((t) => t + 1);
 
@@ -275,9 +443,14 @@ export default function App() {
       try {
         const cfg = await window.api.config.get();
         setConfig(cfg);
-        const t = isValidTheme(cfg.theme) ? cfg.theme : DEFAULT_THEME;
-        setTheme(t);
-        applyTheme(t);
+        /**
+         * 兼容旧配置：老版本存的是 `theme: 'gold' | 'night' | …`。
+         * 那些 id 现在不是 mode，`isValidMode` 会判假 → 落到默认浅色，
+         * 正好是"旧的浅色主题用户平移到新体系"，不会突然变深。
+         */
+        const m = isValidMode(cfg.mode) ? cfg.mode : DEFAULT_MODE;
+        setMode(m);
+        applyTheme(m, cfg.customColors);
         const ps = await window.api.project.list();
         setProjects(ps);
         if (cfg.currentProject && ps.some((p) => p.id === cfg.currentProject)) {
@@ -295,10 +468,10 @@ export default function App() {
           numCtx: 8192, temperature: 0.3, fontSize: 16,
           editorFontSize: 16, chatFontSize: 16,
           fontFamily: 'system-ui', editorFont: 'system-ui', chatFont: 'system-ui',
-          theme: DEFAULT_THEME,
+          mode: DEFAULT_MODE,
           notify: 'window', currentProject: null,
         });
-        applyTheme(DEFAULT_THEME);
+        applyTheme(DEFAULT_MODE);
         setProjects([]);
       }
     })();
@@ -313,27 +486,79 @@ export default function App() {
  *   界面就会「显示已保存但颜色没变」——用户改了看不到，只能重启。
  *   CSS 变量挂 data-theme，不重渲染组件就能变色。
  *
- *   另外 theme 做兜底：万一 cfg 里没有 theme 字段（配置损坏或
- *   桩实现返回了残缺对象），就用现有的 theme 状态，不要退回默认——
- *   那会把用户正在用的深色主题强行切回浅色。
+ *   另外 mode 做兜底：万一 cfg 里没有 mode 字段（配置损坏或
+ *   桩实现返回了残缺对象），就用现有的 mode 状态，不要退回默认——
+ *   那会把用户正在用的深色模式强行切回浅色。
+ *
+ *   ⚠ 这里必须把 `customColors` 一起传下去。设置页改颜色走的是
+ *     `save({ customColors })`，只更新 config 不重算 DOM 的话，
+ *     用户点色块界面纹丝不动，会以为取色器坏了。
  */
 const applyConfig = useCallback(async (cfg) => {
   const next = cfg || {};
   setConfig(next);
-  const t = isValidTheme(next.theme) ? next.theme : (isValidTheme(theme) ? theme : DEFAULT_THEME);
-  setTheme(t);
-  applyTheme(t);
-}, [theme]);
+  const m = isValidMode(next.mode) ? next.mode : (isValidMode(mode) ? mode : DEFAULT_MODE);
+  setMode(m);
+  applyTheme(m, next.customColors);
+}, [mode]);
 
-const changeTheme = useCallback(async (id) => {
-  setTheme(id);
-  applyTheme(id);
-  try {
-    await window.api.config.set({ theme: id });
-    const cfg = await window.api.config.get();
-    setConfig(cfg);
-  } catch (_) { /* 持久化失败不影响本次切换 */ }
-}, []);
+/**
+ * 顶部那个「一键切深浅」的按钮（2026-11-02 羽毛菌要的）。
+ *
+ * ## 为什么不是三档循环
+ *
+ * 设置页里是**三档**（浅色 / 深色 / 跟随系统），因为那里是"一次性设定"。
+ * 顶栏这个是**高频手癖**：只想"现在太亮了，换黑的"。所以点一下就在
+ * 明↔暗之间翻，**不经过"跟随系统"**。停在 system 档时点它，
+ * 按"当前实际长什么样"翻到相反的**固定**档 —— 否则跟随系统时点了没反应。
+ *
+ * ## 先改界面，再落盘
+ *
+ * `applyTheme` 同步生效（改 CSS 变量），不等 IPC 往返。
+ * 写盘失败只提示，不回滚：主题是纯表现层，回滚反而会闪一下。
+ */
+const toggleDark = useCallback(() => {
+  const isDark = mode === 'dark' || (mode === 'system' && sysDark);
+  const next = isDark ? 'light' : 'dark';
+  setMode(next);
+  applyTheme(next, config && config.customColors);
+  (async () => {
+    try {
+      const cfg = await window.api.config.set({ mode: next });
+      applyConfig(cfg);
+    } catch (e) {
+      showToast && showToast(`主题没存上：${e.message || e}`);
+    }
+  })();
+}, [mode, sysDark, config, applyConfig, showToast]);
+
+/**
+ * 「跟随系统」时监听 Windows 的深浅切换。
+ *
+ * ⚠ 只在 system 档挂监听：另外两档跟着系统变是错的（用户明确选了深色，
+ *   系统白天切浅色不能把他拽回白底）。
+ * ⚠ 依赖里带 config 是为了拿到最新的 customColors —— 监听回调闭包会
+ *   捕获注册那一刻的值，不带就会用旧颜色重绘。
+ */
+useEffect(() => {
+  if (mode !== 'system' || !window.matchMedia) return undefined;
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const onChange = () => {
+    // ⚠ 顺手把 sysDark 同步一下：顶部的一键切换按钮靠它决定画月亮还是太阳。
+    //   只 applyTheme 不 setState 的话 CSS 变了、图标还是旧的。
+    setSysDark(mq.matches);
+    applyTheme('system', config && config.customColors);
+  };
+  // 进这个 effect 时也先对齐一次，避免"系统本来就是深色、mode 却刚切成 system"那一下画错图标
+  setSysDark(mq.matches);
+  // Safari 老版本只有 addListener，Electron 里用 addEventListener 就够，加个兜底
+  if (mq.addEventListener) mq.addEventListener('change', onChange);
+  else if (mq.addListener) mq.addListener(onChange);
+  return () => {
+    if (mq.removeEventListener) mq.removeEventListener('change', onChange);
+    else if (mq.removeListener) mq.removeListener(onChange);
+  };
+}, [mode, config]);
 
   // ================================================================
   // 引用源加载
@@ -405,15 +630,42 @@ const changeTheme = useCallback(async (id) => {
     }
   }, [convId]);
 
-  useEffect(() => { loadConversations(projectId, true); }, [projectId]);
+  /**
+   * ⚠⚠ 2026-11-05 这里从 `true` 改成 `false`：进项目先停在欢迎页，
+   *   不再自动打开上次那条对话。
+   *
+   *   原来 `true` 会直接 `selectConversation(list[0])`，消息流立刻有内容，
+   *   空状态根本不渲染 —— 于是「第二次从书架进来」永远看不到
+   *   「继续写作 / 规划章纲 / 查询冲突」这三个按钮。
+   *   现在打开上次对话的入口就是「继续写作」按钮本身
+   *   （db 里 listConversations 已按 updated_at DESC 排好序）。
+   */
+  useEffect(() => { loadConversations(projectId, false); }, [projectId]);
 
   const selectConversation = useCallback(async (id) => {
     convSeq.current += 1;
     const seq = convSeq.current;
+    /**
+     * ⚠⚠ 点对话必须把「对话」标签打开并激活（2026-10-29 修）。
+     *
+     * 原来这里只 `setConvId` —— 如果用户之前把「对话」标签关掉了，
+     * 点左侧对话只会让那一行**高亮**，中间栏还停在文档预览上，
+     * 看起来像"对话内容不见了"。用户会以为数据丢了，实际是标签没开。
+     *
+     * ⚠ `setOpenTabs` / `setActiveTab` 虽然声明在下面，但它们是 state setter，
+     *   稳定且调用时早已初始化 —— 这不构成 TDZ（和 useState 取值不同）。
+     */
+    setOpenTabs((prev) => (prev.includes('chat') ? prev : [...prev, 'chat']));
+    setActiveTab('chat');
     setConvId(id);
     setStyleResult(null);
     setStreamingText('');
     setStreamingThink('');
+    // ⚠ 切对话要清工具卡片（2026-10-29 改了清空时机后必须补这句）：
+    //   不清的话，上一个对话的「读取文件 xxx」会跟着带进新对话，
+    //   看起来像这个对话读过那些文件。
+    setToolCalls([]);
+    setToolsCollapsed(false);
     const ms = await window.api.conv.messages({ conversationId: id });
     // IPC 往返期间用户可能又切了对话，丢弃过期响应
     if (seq !== convSeq.current) return;
@@ -504,11 +756,20 @@ const changeTheme = useCallback(async (id) => {
   useEffect(() => {
     unsubs.current = [
       window.api.generate.onChunk((text) => {
+        lastChunkAt.current = Date.now();
         setStreamingText((prev) => prev + text);
       }),
       window.api.generate.onDone((meta) => {
         setGenerating(false);
         setStreamingText('');
+        // 正文吐完了，把工具卡片收成一行摘要 —— 留着能回看，但不占屏幕
+        setToolsCollapsed(true);
+        // 写完章节 → 问一句要不要同步维护文档（2026-10-29）。
+        // ⚠ 只在**正常完成**时问：出错的、被停下的，章节本身可能都不完整，
+        //   这时去更新摘要等于把半截内容写进长期资料。
+        if (meta && !meta.stopped && Array.isArray(meta.chapterSaved) && meta.chapterSaved.length) {
+          setSyncAsk({ paths: meta.chapterSaved });
+        }
         // 生成完成提示音：notify 含「提示音」时播（'window'/'none' 不响）。
         // ⚠ 必须读 configRef.current 拿最新 notify——这个回调闭包捕获的
         //   config 是订阅那一刻的旧值，用户中途改了提示方式不会生效。
@@ -518,13 +779,23 @@ const changeTheme = useCallback(async (id) => {
             try { playChime(); } catch (_) { /* 音频不可用不影响主流程 */ }
           }
         }
-        // ⚠ 工具卡片必须清：不清的话下一轮生成时它们会跟新卡片叠在一起，
-        //   用户会以为模型把刚才那几条命令又跑了一遍。
-        //   （结束卡片也可能还挂在"执行中"，那更吓人。）
-        setToolCalls([]);
+        // ⚠ 工具卡片**不在这里清**（2026-10-29 改）。
+        //   原来清在这儿，导致生成一结束卡片就消失，用户翻记录看不到它读了什么。
+        //   现在改成下一轮 `send` 开头再清 —— 生成完能回看，又不会跟新卡片叠。
         // 思考留一小会儿让用户看到，1.2 秒后淡出
         setTimeout(() => setStreamingThink(''), 1200);
-        if (meta && meta.stopped) { setStatus('已停止'); return; }
+        /**
+         * ⚠⚠ 停止也要把消息拉回来（2026-11-05）。
+         *
+         * 主进程 generate:stop 会把**已经吐出来的半截正文**落库，
+         * 这里如果直接 `return`，界面就停在「什么都没有」——
+         * 用户看到的是自己那句提问孤零零留着、AI 说的话凭空消失。
+         */
+        if (meta && meta.stopped) {
+          setStatus('已停止');
+          if (convId) window.api.conv.messages({ conversationId: convId }).then(setMessages);
+          return;
+        }
         if (meta && meta.tokensOut) {
           setStatus(`${((meta.ms || 0) / 1000).toFixed(1)}s · ${meta.tokensOut} tokens`);
         } else {
@@ -540,6 +811,7 @@ const changeTheme = useCallback(async (id) => {
        * 把思考混进去，用户稿子里就会多一段「嗯，用户让我写…」。
        */
       window.api.generate.onThink((text) => {
+        lastChunkAt.current = Date.now();
         setStreamingThink((prev) => prev + text);
       }),
       /**
@@ -573,6 +845,7 @@ const changeTheme = useCallback(async (id) => {
         setStreamingText('');
         setStreamingThink('');
         setToolCalls([]);
+        setToolsCollapsed(false);
         // ⚠ 出错时审批弹窗要一起收掉。不收的话主进程已经不再等这个决定了，
         //   弹窗会一直挂在屏幕上，用户点了也没反应——看起来像软件死了。
         setApproval(null);
@@ -606,6 +879,29 @@ const changeTheme = useCallback(async (id) => {
     ];
     return () => { unsubs.current.forEach((f) => f()); unsubs.current = []; };
   }, [convId, projectId]);
+
+  /**
+   * 「正文吐完了、done 却没到」的兜底（2026-11-05）。
+   *
+   * 现场：AI 的回答已经整段显示出来，发送键却还是红色停止方块 ——
+   * 说明 generate:done 没送到渲染层（流没正常收尾 / 窗口错过事件），
+   * `generating` 永远为 true，界面看起来像卡死。
+   *
+   * 判据：收到过分片、且**两分钟**没有新分片 → 主动停一次并说明原因。
+   * ⚠ 必须用 lastChunkAt 而不是"发了多久"：长文生成十几分钟是正常的，
+   *   只有"完全没动静"才算卡住。思考分片也算动静（onThink 里同样刷新）。
+   */
+  useEffect(() => {
+    if (!generating) return undefined;
+    const timer = setInterval(() => {
+      if (!lastChunkAt.current) return;
+      if (Date.now() - lastChunkAt.current < 120000) return;
+      lastChunkAt.current = 0;
+      try { window.api.generate.stop(); } catch (_) { /* 停不掉也要把状态复位 */ }
+      setError('模型两分钟没有返回新内容，已自动停止。换一个模型或服务商再试；已经写出来的部分留在了对话里。');
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [generating]);
 
   /**
    * 《用户协议》弹窗。
@@ -662,7 +958,29 @@ const changeTheme = useCallback(async (id) => {
    *   带上它 → 那一条放行，且**不再重复记警告**；不带 → 按第一次那样又被拦一次。
    *   它绑定原文，所以弹窗期间改了输入就失效（这是有意的）。
    */
-  const send = async (text, refs, agreementToken) => {
+  /**
+   * @param {string} [targetConvId] 欢迎页的「规划章纲 / 查询冲突」用：
+   *   进项目时我们刻意没有选中任何对话（convId 为 null），
+   *   但这两个动作应该接着最近那条对话聊，而不是又新开一条。
+   *   ⚠ 不能用 `await selectConversation(id)` 再调 send —— setConvId 是异步的，
+   *   同一轮 send 的闭包里 convId 还是 null，照样新建对话。所以走局部变量 cid。
+   *   不传时行为与以前完全一致。
+   */
+  const send = async (text, refs, agreementToken, targetConvId) => {
+    /**
+     * ⚠ 新一轮开始时清空上一轮的工具卡片（2026-10-29 调整）。
+     *
+     * 原来是在 `generate:done` 里清 —— 于是**生成一结束卡片就消失**，
+     * 用户回头翻记录时看不到"它刚才读了哪些文件、写了什么"，只能从回复里猜。
+     * 竞品的做法是留在历史里，随时能核对。
+     *
+     * 现在改成"下次发送时才清"：生成完的卡片留着能回看，
+     * 又不会跟下一轮的叠在一起（那会让人以为命令跑了两遍）。
+     */
+    setToolCalls([]);
+    setToolsCollapsed(false);
+    // 这一轮从此刻开始计时；之后每秒没分片进来就会被兜底逻辑盯上
+    lastChunkAt.current = Date.now();
     /**
      * ⚠ 零项目时的文案要**指得出位置**。
      *
@@ -681,7 +999,10 @@ const changeTheme = useCallback(async (id) => {
      * 所以"改了档位但没有发送"也不会丢——changeThinkLevel 已经落过库了。
      */
     const think = thinkLevel;
-    if (!convId) {
+    const cid = targetConvId || convId;
+    // 指定了目标对话就把它选上，否则列表不高亮、下一轮又会新建一条
+    if (targetConvId && targetConvId !== convId) setConvId(targetConvId);
+    if (!cid) {
       // 没选对话就现建一个——比弹窗问「要不要新建」顺手
       const c = await window.api.conv.create({ projectId, title: (text || '').slice(0, 16) });
       await loadConversations(projectId);
@@ -721,7 +1042,15 @@ const changeTheme = useCallback(async (id) => {
           setScopeNotice(r.reason || '连续两轮没有任何写作产出，已暂停对话功能。');
         }
       } catch (e) {
-        setGenerating(false); setError(e.message); setStatus('');
+        setGenerating(false); setError(friendlyModelError(e.message)); setStatus('');
+        /**
+         * ⚠⚠ 用户消息「消失」的根因就在这（2026-11-05）。
+         *
+         * 主进程是先落库用户消息、再连模型的；连不上时 conv:send 直接抛错，
+         * 渲染层这个 catch 只显示红字、**没有重新拉消息** ——
+         * 气泡看起来就是被吞了。补这一下，字一定还在。
+         */
+        if (cid) window.api.conv.messages({ conversationId: cid }).then(setMessages);
       }
       return;
     }
@@ -733,7 +1062,7 @@ const changeTheme = useCallback(async (id) => {
     setLastUserText(text || '');
     try {
       const r = await window.api.conv.send({
-        conversationId: convId, projectId, text, refs,
+        conversationId: cid, projectId, text, refs,
         model: config?.model, temperature: config?.temperature, thinkLevel: think,
         tools: toolsThisTurn, agreementToken,
         // 同上：当前打开的文件，用于"重写这一章"时定到具体章节
@@ -761,11 +1090,13 @@ const changeTheme = useCallback(async (id) => {
         return;
       }
       // 用户消息已落库，立刻回显，不等生成结束
-      window.api.conv.messages({ conversationId: convId }).then(setMessages);
+      window.api.conv.messages({ conversationId: cid }).then(setMessages);
     } catch (e) {
       setGenerating(false);
-      setError(e.message);
+      setError(friendlyModelError(e.message));
       setStatus('');
+      // 同上：用户消息已经落库，必须拉回来，否则气泡就“消失”了
+      if (cid) window.api.conv.messages({ conversationId: cid }).then(setMessages);
     }
   };
 
@@ -958,6 +1289,30 @@ const changeTheme = useCallback(async (id) => {
     //   这一排六个工具，只有它是四个字，挤得整行更早溢出到三点菜单里。
     //   面板内部标题仍是「简介生成器」，不影响用户理解。
     { key: 'intro', label: '简介', icon: '✨', hint: '读书稿生成作品简介，可存成文件' },
+    /**
+     * 拆书（2026-10-28）。
+     *
+     * ⚠ 它**不是**广场里的商品 —— 广场是装别人技能的地方，
+     *   而"拆解一本书"是写长篇的日常动作，不该让用户先下载才能用。
+     *   所以：能力做成**内置技能**（builtin-skills/sk-story-analyze），
+     *   入口放在**这一排**，点一下就走。
+     *
+     * ⚠ 与其他几个的区别：它**要调模型**、产出长文，所以点它直接发消息，
+     *   不切 ToolsPanel（那个面板是一问一答的短交互）。
+     */
+    /**
+     * 生成封面（2026-11-02）。
+     *
+     * ⚠ 羽毛菌纠正过两次：这是**小说封面**，不是"海报"。
+     *   位置也是他定的：「封面功能按钮应该放在快捷工具那一栏」——
+     *   设置页只负责配模型，不负责生成（那里只有「保存并测试」）。
+     *
+     * ⚠⚠ 放在**拆书前面**：这一排放不下时，后面的会收进「⋯」菜单里
+     *   （ChatPanel 的 visibleTools 按宽度裁）。封面是新功能，
+     *   第一次就要出现在「⋯」里等于没做 —— 而拆书是低频动作，往后排无妨。
+     */
+    { key: 'cover', label: '封面', icon: '🖼️', hint: '按书名和简介生成小说封面' },
+    { key: 'analyze', label: '拆书', icon: '🔍', hint: '拆解一本书的钩子、爽点、结构与伏笔' },
   ];
 
   /**
@@ -971,6 +1326,12 @@ const changeTheme = useCallback(async (id) => {
   const CARD_TOGGLES = [
     { pane: 'conversations', label: '对话列表', icon: '🗂' },
     { pane: 'main', label: '对话框', icon: '💬' },
+    /**
+     * ⚠ 2026-11-02 补的第三栏。原来只有前两个 ——
+     *   文件树收起后没有任何入口能叫回来，用户只能重启。
+     *   （苹果风原型里是三个开关，一栏一个。）
+     */
+    { pane: 'files', label: '文件树', icon: '📁' },
   ];
 
   // ⚠ 原来这里有个 newProject（window.prompt 问名字 → 建项目）。
@@ -1005,6 +1366,8 @@ const changeTheme = useCallback(async (id) => {
   // 而不是被程序按流程一步步带过去。
   // ================================================================
   const [showStyleDistill, setShowStyleDistill] = useState(false);
+  /** 生成封面弹窗（2026-11-02）。挂在根层，书架和编辑器上都能盖。 */
+  const [showCover, setShowCover] = useState(false);
   /** 自定义背景图（毛玻璃）—— 必须在所有面板之下 */
   const bg = useBackground();
   /**
@@ -1066,6 +1429,11 @@ const changeTheme = useCallback(async (id) => {
    *   点「起名」就看到起名。只靠 activeTab 区分不出来。
    */
   const [activeTool, setActiveTool] = useState(null);
+  /**
+   * 起名 / 脑洞 / 灵感碎片的弹窗（2026-11-03）。
+   * 值是 `'name' | 'brain' | 'idea'`，null 表示没开。
+   */
+  const [toolModal, setToolModal] = useState(null);
 
   /**
    * 点顶栏某个快捷工具。
@@ -1074,15 +1442,122 @@ const changeTheme = useCallback(async (id) => {
    *   用户正在灵感碎片里写了半段，点一下顶栏再点回来，
    *   如果重置成全部展开，他会丢掉"我在哪个工具"的上下文。
    */
-  const openQuickTool = useCallback((t) => {
+  /**
+   * ⚠ 这个 state 原属「项目文件树」那一段（约 1149 行），2026-10-28 提到这里。
+   *
+   * 起因：`openQuickTool` 一度依赖它，而依赖数组是**渲染时求值**的 ——
+   * 声明在后面就炸 `Cannot access 'xx' before initialization`，整个 App 白屏。
+   *
+   * 拆书改成「让用户选文件」之后，`openQuickTool` 不再依赖它了，
+   * **技术上可以放回原位**。但保持在这里也完全无害，
+   * 而且下次谁要在上层回调里用它时，不会再踩一次同样的坑。
+   */
+  const [previewPath, setPreviewPath] = useState(null);
+
+  /**
+   * 正在拆的书（2026-10-28）。
+   *
+   * 点「拆书」选了文件之后不直接发 —— 先让用户勾章节。
+   * 一本书几百章，全塞进去装不下；按字数硬切又会切在剧情中间。
+   *
+   * ⚠ 这个 state 必须在 `openQuickTool` **之前**声明：
+   *   openQuickTool 里要调 `setAnalyzeBook`，而它是 useCallback，
+   *   依赖数组在渲染时求值 —— 声明在后面就是 TDZ，整个 App 白屏。
+   *   （这个坑今天刚踩过一次，见 previewPath 的注释。）
+   */
+  const [analyzeBook, setAnalyzeBook] = useState(null);
+
+  /**
+   * 正在跑的拆书任务（2026-10-28）。
+   *
+   * ⚠ 拆书**不进对话**：产出几万字，进历史会拖累后面每一轮，
+   *   而它只是"一次性解析"，不需要模型记住。结果走保存，落到项目里的「拆书/」。
+   */
+  const [analyzeJob, setAnalyzeJob] = useState(null);
+
+  const openQuickTool = useCallback(async (t) => {
+    /**
+     * 起名 / 脑洞 / 灵感碎片 → **各自一个弹窗**（2026-11-03）。
+     *
+     * ⚠ 羽毛菌：「都应该做单独的交互而不是和备忘录一样」。
+     *   原来是四个工具共用同一个"打开 md 随便写"的模板 ——
+     *   对备忘录是对的（它就是随手记），对这三个是错的：
+     *   用户要的是"我提要求、模型给初稿"，而不是"给我一个空文件"。
+     *
+     * ⚠ 必须放在下面那些分支**之前**判断，且 `projectId` 为空时挡住：
+     *   这三个最终要把结果写进项目文件，没项目就没有落点。
+     */
+    if (t.key === 'name' || t.key === 'brain' || t.key === 'idea') {
+      if (!projectId) { showToast('先打开一本书，才有地方存'); return; }
+      setToolModal(t.key);
+      return;
+    }
     // ⚠ 文风蒸馏是多步长任务（分块读 → 汇总 → 存技能），
     //   不适合塞进 ToolsPanel 那个一问一答的面板。
     if (t.key === 'style') { setShowStyleDistill(true); return; }
     if (t.key === 'intro') { setShowIntro(true); return; }
+    // 封面：独立弹层。不切 ToolsPanel —— 那面板是一问一答的短交互，
+    // 而它要跑一次几十秒的生图 + 一张大图预览。
+    if (t.key === 'cover') {
+      if (!projectId) { showToast('先打开一本书，才有封面可画'); return; }
+      setShowCover(true);
+      return;
+    }
+    /**
+     * 拆书（2026-10-28）：直接发一条预设消息，产物落在对话里。
+     *
+     * ⚠ 为什么不弹面板：拆书的产出是**长文报告**（五层拆法，每层带证据），
+     *   塞进小面板里根本看不完，也没法接着追问"第三层再细一点"。
+     *   放对话里，用户能追问、能复制、能让它存成文件。
+     *
+     * ⚠ 书名优先取**当前打开的文件**（previewPath）—— 比让用户手打准，
+     *   也和他的真实意图一致（他刚打开那本书，多半就是要拆它）。
+     */
+    if (t.key === 'analyze') {
+      /**
+       * ⚠⚠ 拆书拆的是**别人的完结作品**，不是用户自己的稿子（2026-10-28 改）。
+       *
+       * 第一版取的是 previewPath（当前打开的文件）——那基本是**他自己正在写的**，
+       * 没写完，拆不出结构。他原话：「自己写得都没写完，能拆出个啥？」
+       *
+       * ⚠ 第二个问题同样致命：一整本网文几十万字，**塞不进上下文**。
+       *   所以按字数分流：小文件给全文，大文件只给开头 + 明确告诉模型还有多少没读。
+       *   这样模型不会假装"我读完了"，用户也知道这次拆的是局部。
+       */
+      let picked = null;
+      try {
+        picked = await window.api.dialog.pickTextFile();
+      } catch (e) {
+        showToast(`读取失败：${e?.message || '未知错误'}`);
+        return;
+      }
+      if (!picked || !picked.ok) return;   // 用户点了取消
+
+      /**
+       * 认出了章节 → 开勾选面板，让用户自己决定拆哪几章。
+       * 没认出来（短篇、片段、公告）→ 直接发全文，上限 3 万字。
+       */
+      if (Array.isArray(picked.chapters) && picked.chapters.length > 1) {
+        setAnalyzeBook(picked);
+        return;
+      }
+
+      const body = picked.text.slice(0, 30000);
+      const cut = picked.chars > body.length
+        ? `\n\n（这份文本共 ${picked.chars} 字，只给了前 ${body.length} 字，后面没读。拆的时候只说你能看见的部分。）`
+        : '';
+      send(`帮我拆一下《${picked.name}》的结构和节奏。${cut}\n\n---\n${body}`);
+      return;
+    }
     setOpenTabs((prev) => (prev.includes('tools') ? prev : [...prev, 'tools']));
     setActiveTab('tools');
     setActiveTool((prev) => (prev === t.key ? prev : t.key));
-  }, []);
+    // ⚠ 依赖不能是空数组（2026-10-28 改）：这个回调现在要用 send 和 previewPath，
+    //   写成 [] 会永久冻住**第一次渲染时**的那份 send —— 它闭包里的 convId 是旧的，
+    //   点"拆书"会发到上一条对话里去。这个坑在 agreeAndSend 那里踩过一次。
+  // ⚠ 2026-11-02 加 projectId：封面要"当前这本书"，闭包里冻住旧值就会
+  //   画到上一本书上（书名/简介全错，而界面看着一切正常）。
+  }, [send, showToast, projectId]);
 
   // ================================================================
   // 项目文件树（第 4 栏）与文档预览（第 3 栏）
@@ -1103,7 +1578,9 @@ const changeTheme = useCallback(async (id) => {
     const out = [];
     const walk = (nodes, prefix) => {
       for (const n of nodes || []) {
-        if (n.type === "file") out.push({ path: prefix + n.name, name: n.name });
+        // ⚠ 带上 mtime：欢迎页「查询冲突」要挑**最新**那卷卷纲，
+        //   只留 path/name 就只能按文件名猜（「第十卷」字典序还排在「第二卷」前面）。
+        if (n.type === "file") out.push({ path: prefix + n.name, name: n.name, mtime: n.mtime || '' });
         else if (n.children) walk(n.children, prefix + n.name + "/");
       }
     };
@@ -1113,7 +1590,7 @@ const changeTheme = useCallback(async (id) => {
   const [treeLoading, setTreeLoading] = useState(false);
   const [treeError, setTreeError] = useState(null);
   const [openFiles, setOpenFiles] = useState([]);      // [{path, name}] 多文档
-  const [previewPath, setPreviewPath] = useState(null);
+  // ⚠ previewPath 的声明已上移到 openQuickTool 之前（TDZ，见那里的注释）
   const [doc, setDoc] = useState(null);
   const [docLoading, setDocLoading] = useState(false);
   const [docError, setDocError] = useState(null);
@@ -1179,16 +1656,179 @@ const changeTheme = useCallback(async (id) => {
     return () => { alive = false; off(); };
   }, []);
 
-  const togglePane = useCallback((key) => {
-    setHiddenPanes((prev) => {
-      const next = prev.includes(key) ? prev.filter((x) => x !== key) : [...prev, key];
-      try { localStorage.setItem('wt.hiddenPanes', JSON.stringify(next)); } catch (_) { /* 存不了也不影响用 */ }
-      return next;
-    });
+  /**
+   * 正在收起的栏（2026-11-03）。
+   *
+   * 羽毛菌：「你只做了入场的动画，消失的没有」。
+   * 原因很直白：`hiddenPanes` 一改，那一栏立刻被卸载，没有"离开"的时机。
+   * 做法是**延迟 200ms 再真的收起**：先把 key 放进 closingPanes，
+   * SplitPanes 给那一栏打上 `data-pane-closing`，CSS 把宽度收到 0 并淡出；
+   * 200ms 后（宽度已经是 0）再从 hiddenPanes 里加进去，此时摘掉看不见。
+   *
+   * ⚠ 用 ref 读当前的 hiddenPanes：togglePane 是 useCallback([])，
+   *   直接读 state 会拿到闭包里的旧值（连点两次判断就反了）。
+   */
+  const hiddenPanesRef = useRef(hiddenPanes);
+  useEffect(() => { hiddenPanesRef.current = hiddenPanes; }, [hiddenPanes]);
+  const [closingPanes, setClosingPanes] = useState([]);
+  const closeTimers = useRef({});
+  useEffect(() => () => {
+    for (const t of Object.values(closeTimers.current)) clearTimeout(t);
   }, []);
+
+  const togglePane = useCallback((key) => {
+    const isHidden = hiddenPanesRef.current.includes(key);
+
+    // 展开：立刻生效（paneIn 动画负责"进来"）
+    if (isHidden) {
+      setHiddenPanes((prev) => {
+        const next = prev.filter((x) => x !== key);
+        try { localStorage.setItem('wt.hiddenPanes', JSON.stringify(next)); } catch (_) { /* 存不了也不影响用 */ }
+        return next;
+      });
+      return;
+    }
+
+    /**
+     * 收起：如果它已经在"正在收起"里，说明用户连点了两下 —— 当成反悔，
+     * 取消这次收起（否则两下之后它还是没了，手感像点漏了一下）。
+     */
+    if (closingPanes.includes(key)) {
+      clearTimeout(closeTimers.current[key]);
+      setClosingPanes((c) => c.filter((x) => x !== key));
+      return;
+    }
+
+    setClosingPanes((c) => [...c, key]);
+    clearTimeout(closeTimers.current[key]);
+    closeTimers.current[key] = setTimeout(() => {
+      setHiddenPanes((prev) => {
+        const next = prev.includes(key) ? prev : [...prev, key];
+        try { localStorage.setItem('wt.hiddenPanes', JSON.stringify(next)); } catch (_) { /* 同上 */ }
+        return next;
+      });
+      setClosingPanes((c) => c.filter((x) => x !== key));
+    }, 200);
+  }, [closingPanes]);
 
   /** 左边两栏都收起来了 = 纯手工模式（顶栏给个提示，别让人以为软件坏了） */
   const manualMode = hiddenPanes.includes('conversations') && hiddenPanes.includes('main');
+
+  // ================================================================
+  // 欢迎页：第一次 / 第二次两套入口（2026-11-05）
+  // ================================================================
+  /**
+   * ⚠ 用算的，不另存一份 state。
+   *   存 state 就得在新建对话、删对话、切项目三处同步，漏一处会显示上一本书的按钮。
+   */
+  const welcomeMode = useMemo(
+    () => (projectId ? (conversations.length ? 'returning' : 'first') : null),
+    [projectId, conversations.length],
+  );
+
+  /**
+   * 卷纲类文件，按修改时间倒序 —— 第 0 个就是「最新的卷纲」。
+   *
+   * ⚠ 不能按文件名排序：「第十卷.md」的字典序排在「第二卷.md」前面，
+   *   按名字取最后一个会拿到最早写的那卷。fs:tree 本来就带 mtime，
+   *   filePaths 压平的时候留一份就行。
+   * ⚠ 顺带认短篇的「小节大纲.md」和短剧的「剧集/」，
+   *   否则这两类项目点「查询冲突」会一个文件都找不到。
+   */
+  const outlineFiles = useMemo(() => filePaths
+    .filter((f) => /(^|\/)卷纲\/.+\.(md|txt)$/i.test(f.path)
+      || /(^|\/)小节大纲\.md$/i.test(f.path)
+      || /(^|\/)剧集\/.+\.(md|txt)$/i.test(f.path))
+    .slice()
+    .sort((a, b) => String(b.mtime || '').localeCompare(String(a.mtime || ''))),
+  [filePaths]);
+
+  /**
+   * 文件引用的形状必须和 ChatPanel.toggleRef 一模一样：
+   * key = kind + ':' + id，id 是**相对项目根的路径**。
+   * 主进程 buildRefBlock 对这个 kind 会去 pfs.read(projectId, r.id) 把正文塞进上下文，
+   * 所以 content 留空串即可 —— 写死内容反而是把旧稿钉死在这一轮。
+   */
+  const asFileRef = useCallback((f) => ({
+    key: 'file:' + f.path, kind: 'file', id: f.path, name: f.name, content: '',
+  }), []);
+
+  /** 「查询冲突」要读的三份：世界观、人物库、最新卷纲 */
+  const conflictRefs = useMemo(() => {
+    const out = [];
+    const world = filePaths.find((f) => /(^|\/)设定\/世界观\.md$/i.test(f.path))
+      || filePaths.find((f) => /(^|\/)设定\.md$/i.test(f.path));
+    const cast = filePaths.find((f) => /(^|\/)设定\/人物库\.md$/i.test(f.path))
+      || filePaths.find((f) => /(^|\/)人物库\.md$/i.test(f.path));
+    for (const f of [world, cast, outlineFiles[0]]) {
+      if (f && !out.some((r) => r.id === f.path)) out.push(asFileRef(f));
+    }
+    return out;
+  }, [filePaths, outlineFiles, asFileRef]);
+
+  /** 「规划章纲」带上最新卷纲与章节摘要，AI 问下一章时才不是空问 */
+  const outlineRefs = useMemo(() => {
+    const out = [];
+    if (outlineFiles[0]) out.push(asFileRef(outlineFiles[0]));
+    const summary = filePaths.find((f) => /(^|\/)章节摘要\.md$/i.test(f.path));
+    if (summary) out.push(asFileRef(summary));
+    return out;
+  }, [filePaths, outlineFiles, asFileRef]);
+
+  const welcomeAction = useCallback(async (key) => {
+    // 教程只开弹窗，不碰对话、不发消息
+    if (key === 'guide') { setShowGuide(true); return; }
+
+    // db 的 listConversations 已按 updated_at DESC 排好，第 0 条就是上次那段
+    if (key === 'continue') {
+      if (conversations.length) await selectConversation(conversations[0].id);
+      else await createConversation('继续写作');
+      return;
+    }
+
+    if (generating) { showToast('上一轮还没写完，等一下再点'); return; }
+
+    // 下面四个动作接着最近那条对话聊，不另起一条；没有对话时传 undefined 走新建
+    const recent = conversations.length ? conversations[0].id : undefined;
+
+    if (key === 'newbook') {
+      await send(
+        '我们要开一本新书。先用几个短问题问我：写什么类型、给谁看、主角是谁、大概写多长、有没有已经定好的设定。一次最多问 4 个，别让我填表。等我回答之后，再给一版基础大纲：一到三卷的主线、主要人物、关键转折，并问我哪里要改。这一轮只提问，不要生成大纲，也不要写正文。',
+        [], undefined, recent,
+      );
+      return;
+    }
+
+    if (key === 'build') {
+      await send(
+        '我要搭一份大纲。先问我手上有没有现成的大纲或零散想法，想细化哪一层：全书主线、分卷，还是章纲。等我回答后，把我给的内容整理成结构清楚的大纲，缺的地方标出来问我要不要补。这一轮只提问，不要生成大纲，也不要写正文。',
+        [], undefined, recent,
+      );
+      return;
+    }
+
+    if (key === 'outline') {
+      // 界面侧「打开卷纲文件夹」：第 4 栏展开这个目录（带 nonce，连点两次也会重开）
+      setFocusDir({ path: '卷纲', nonce: Date.now() });
+      await send(
+        '我要规划下一章。卷纲文件夹已经打开了。请先只问我要不要现在规划下一章，以及想怎么生成：按现有卷纲顺推、我给要点你扩写、还是先看章节摘要再定。等我回答后再动手。这一轮不要生成章纲，也不要写正文。',
+        outlineRefs, undefined, recent,
+      );
+      return;
+    }
+
+    if (key === 'conflict') {
+      if (!conflictRefs.length) {
+        showToast('还没找到设定或卷纲文件，先在项目文件夹里写点内容');
+        return;
+      }
+      await send(
+        '请检查设定与卷纲有没有冲突。世界观、人物库和最新一卷的卷纲已经作为文件引用带上了。逐条比对人物设定、时间线、地点、能力与境界规则、已经埋下的伏笔；只列确实有依据的冲突，每条写清是哪两份材料、哪一句互相矛盾；没有冲突就直说没有，不要凑数。缺哪份文件也先说明。这一轮不要改文件，也不要开始写正文。',
+        conflictRefs, undefined, recent,
+      );
+    }
+  }, [conversations, createConversation, selectConversation, send, generating,
+    showToast, outlineRefs, conflictRefs]);
 
   const refreshTree = useCallback(async () => {
     if (!projectId) { setTree(null); return; }
@@ -1440,13 +2080,23 @@ const changeTheme = useCallback(async (id) => {
 
   const currentProject = projects.find((p) => p.id === projectId) || null;
 
-  const createProjectBy = useCallback(async (name) => {
+  /**
+   * 新建项目。
+   *
+   * @param {string} name
+   * @param {'long'|'short'|'drama'} [kind] 创作类型，决定建哪套骨架
+   *   （2026-11-01 加）。不传就是长篇，和以前一样。
+   */
+  const createProjectBy = useCallback(async (name, kind = 'long', audience = '') => {
     const id = `p-${Date.now().toString(36)}`;
-    const r = await window.api.project.create({ id, name });
+    const r = await window.api.project.create({ id, name, kind, audience });
     setProjects(r.projects || []);
     setProjectId(id);
     setActiveChapterId(null);
-    if (r.createdFolder) showToast(`项目已建，文件夹：${r.dir}`);
+    if (r.createdFolder) {
+      const label = kind === 'short' ? '短篇' : kind === 'drama' ? '短剧' : '长篇';
+      showToast(`${label}项目已建，文件夹：${r.dir}`);
+    }
     bump();
     return id;
   }, [showToast]);
@@ -1485,6 +2135,48 @@ const pickProject = useCallback(async (id) => {
     setActiveChapterId(null);
     bump();
   }, []);
+
+  /**
+   * 从书架点开一个项目（2026-11-01）。
+   *
+   * ⚠ 顺序不能反：先 `pickProject`（它会拉文件树、切 currentProject），
+   *   再 `setView('editor')`。反过来的话编辑器会先渲染一帧"空项目"，
+   *   文件树闪一下才填上。
+   */
+  const openProjectFromShelf = useCallback(async (id) => {
+    await pickProject(id);
+    /**
+     * ⚠⚠ 2026-11-05：从书架进来必须**清空当前对话**，欢迎页才有机会出现。
+     *   拉对话列表的 effect 只在 projectId 变化时跑，而用户点开的往往正好是
+     *   config.currentProject（同一个 id）→ effect 根本不重跑，
+     *   上次残留的 convId / messages 会直接把空状态顶掉，三个按钮永远看不见。
+     *   自增 convSeq 是为了丢掉可能在途的 conv:messages 回包。
+     */
+    convSeq.current += 1;
+    setConvId(null);
+    setMessages([]);
+    setStreamingText('');
+    setStreamingThink('');
+    setToolCalls([]);
+    setToolsCollapsed(false);
+    setFocusDir(null);
+    setView('editor');
+  }, [pickProject]);
+
+  /**
+   * 重新拉一次项目列表（书架封面改了之后要它）。
+   *
+   * ⚠ 必须**重拉**而不是改本地数组里那一条：`cover_path` 是主进程写的，
+   *   前端手上那份还是旧的。改封面后书架毫无变化，用户会以为没生效。
+   */
+  const refreshProjects = useCallback(async () => {
+    try {
+      const ps = await window.api.project.list();
+      setProjects(ps || []);
+    } catch (e) {
+      showToast && showToast(`刷新书架失败：${e.message || e}`);
+    }
+  }, [showToast]);
 
   const renameProject = useCallback(async (id, name) => {
     const r = await window.api.project.rename({ id, name });
@@ -1770,6 +2462,8 @@ const pickProject = useCallback(async (id) => {
             fontFamily={config.chatFont || config.fontFamily || 'system-ui'}
             styleResult={styleResult}
             hasProject={!!projectId}
+            welcomeMode={welcomeMode}
+            onWelcomeAction={welcomeAction}
                     thinkLevel={thinkLevel}
                     thinkLevels={thinkLevels}
                     onThinkLevel={changeThinkLevel}
@@ -1787,6 +2481,8 @@ const pickProject = useCallback(async (id) => {
                     webReady={webReady}
                     onOpenSettings={openSettings}
             toolCalls={toolCalls}
+            toolsCollapsed={toolsCollapsed}
+            onExpandTools={() => setToolsCollapsed(false)}
             bottomSlot={null}
           />
         );
@@ -1941,7 +2637,7 @@ const pickProject = useCallback(async (id) => {
             里面的 button/div 全部自动免疫。
           ⚠ 留白的 flex-1 不标 no-drag → 那一段正好是拖动区。*/}
       <header
-        className="flex items-center gap-2 pl-3 h-10 border-b shrink-0"
+        className="flex items-center gap-2 pl-3 h-10 shrink-0"
         data-testid="app-titlebar"
         style={{
           borderColor: 'var(--line)',
@@ -1969,22 +2665,53 @@ const pickProject = useCallback(async (id) => {
          *   项目文件夹在第 4 栏的导出菜单里已经有了，重复入口。
          */}
         <div className="flex items-center gap-2 shrink-0" style={{ WebkitAppRegion: 'no-drag' }}>
-          <span
+          {/**
+            * 品牌图标（2026-11-03 换标）。
+            *
+            * ⚠ 用的是 `src/assets/logo.svg`，由 `make-icon.js` 生成 ——
+            *   和 exe 图标、启动动画是**同一份** SVG，改一处三处一起变。
+            *   不要在这里手画，否则换个大小就对不上。
+            * ⚠ 原来是「写」字的色块：那个只是"占位图标"，不是品牌。
+            */}
+          <img
+            src={brandLogo}
+            alt=""
             aria-hidden="true"
-            className="flex items-center justify-center rounded"
-            style={{
-              width: 20, height: 20,
-              background: 'var(--accent)', color: 'var(--accent-ink)',
-              fontSize: 12, fontWeight: 700, lineHeight: 1,
-            }}
-          >
-            写
-          </span>
+            style={{ width: 20, height: 20, borderRadius: 5, display: 'block' }}
+          />
           <span className="font-semibold text-[14px] tracking-wide"
                 style={{ color: 'var(--ink)' }}>
-            WriteTool
+            长卷
           </span>
         </div>
+
+        {/**
+          * 「回书架」（2026-11-01）。
+          *
+          * ⚠ 只在编辑器里出现 —— 书架上看不到它，因为已经在书架上了。
+          * ⚠ 必须显式 `-webkit-app-region: no-drag`：顶栏整条是拖拽区，
+          *   app-region 是继承的，漏标的话按钮按不动（表现为"点了没反应"）。
+          */}
+        {view === 'editor' && (
+          <button
+            onClick={() => setView('shelf')}
+            className="ml-1 w-6 h-6 flex items-center justify-center rounded-md"
+            style={{
+              /**
+               * 「回书架」2026-11-02 改成**纯箭头 + 底色**（羽毛菌：「简化成一个
+               * 箭头按钮，带底色就行」）。
+               * ⚠ 原来是没有底色的描边按钮 + "← 书架"两个字，在一排图标里很扎眼。
+               */
+              backgroundColor: 'var(--paper-2)',
+              color: 'var(--ink-soft)',
+              WebkitAppRegion: 'no-drag',
+            }}
+            title="回到书架（选另一本）"
+            data-testid="back-to-shelf"
+          >
+            <Icon name="arrowLeft" size={14} />
+          </button>
+        )}
 
         {/* ⚠ 快捷工具栏已从顶栏移到**对话列顶部**（2026-10-15 羽毛菌：「移到这里」）。
             理由：那几个都是写作辅助，跟着对话场景走更合理；
@@ -2011,6 +2738,50 @@ const pickProject = useCallback(async (id) => {
           className="flex items-center gap-1 ml-2 pl-2 shrink-0"
           style={{ borderLeft: '1px solid var(--line)', WebkitAppRegion: 'no-drag' }}
         >
+          {/**
+            * 一键切深浅（2026-11-02）。
+            *
+            * 位置：分隔线右边第一个 —— 羽毛菌圈的就是这块。放在这里而不是
+            * 跟着"栏开关"走，是因为**书架页也要能切**（栏开关只有编辑器里有）。
+            *
+            * ⚠ 图标用**内联 SVG 线稿**，不用 emoji：旁边三个是彩色 emoji，
+            *   再来一个黄月亮会像随手贴上去的；他给的参考图本身就是线稿。
+            *   `currentColor` 让它跟着主题走，深色下自动变白。
+            * ⚠ 纯图标必须有 title + aria-label，否则就是在猜。
+            */}
+          <button
+            type="button"
+            data-testid="theme-toggle"
+            onClick={toggleDark}
+            aria-label={mode === 'dark' || (mode === 'system' && sysDark) ? '切换到浅色模式' : '切换到深色模式'}
+            title={mode === 'dark' || (mode === 'system' && sysDark)
+              ? '切到浅色（当前深色）'
+              : (mode === 'system' ? '切到深色（当前跟随系统）' : '切到深色（当前浅色）')}
+            /**
+             * ⚠ 同样改用 `.tb-btn`（2026-11-03）：原来靠 onMouseEnter/Leave
+             *   手工改底色，只有"渐变"没有"按下回弹"，和旁边三个栏开关
+             *   手感不一致。现在整条顶栏的图标按钮共用一套曲线。
+             */
+            className="tb-btn w-7 h-7 flex items-center justify-center rounded-lg mr-1"
+            style={{ border: 'none', cursor: 'pointer' }}
+            data-on="0"
+          >
+            {mode === 'dark' || (mode === 'system' && sysDark) ? (
+              /* 太阳：当前是深色，点一下变浅 */
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="4.1" />
+                <path d="M12 2.6v2.1M12 19.3v2.1M2.6 12h2.1M19.3 12h2.1M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M18.6 5.4l-1.5 1.5M6.9 17.1l-1.5 1.5" />
+              </svg>
+            ) : (
+              /* 月亮：当前是浅色，点一下变深（形状照参考图：内侧带一个缺口的弯月） */
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20.6 14.3A8.7 8.7 0 1 1 9.9 3.6a6.9 6.9 0 0 0 10.7 10.7Z" />
+              </svg>
+            )}
+          </button>
+
           {manualMode && (
             <span
               className="text-[11px] mr-1"
@@ -2023,9 +2794,29 @@ const pickProject = useCallback(async (id) => {
           {/* 设置入口住在第 1 栏内部，收起第 1 栏就找不到了。
               所以这里补一个——只在收起时出现，正常布局下仍然只有一个设置入口。 */}
           {hiddenPanes.includes('conversations') && (
-            <Btn onClick={() => openSettings()}>⚙ 设置</Btn>
+            <Btn onClick={() => openSettings()} title="设置"><span className="text-[13px] leading-none">⚙</span></Btn>
           )}
-          {CARD_TOGGLES.map((c) => {
+          {/* 教程常驻入口。欢迎页只在空对话时出现，写起来之后也得有个地方能翻回来看。
+              ⚠ 底色/字色全交给 .tb-btn，不写 inline style（inline 会压掉 :hover）。 */}
+          {view === 'editor' && (
+            <button
+              type="button"
+              data-testid="guide-open"
+              className="tb-btn h-7 px-2 rounded-lg text-[12px] shrink-0"
+              title="使用教程"
+              onClick={() => setShowGuide(true)}
+            >
+              教程
+            </button>
+          )}
+          {/**
+            * 栏开关只在**编辑器**里出现（2026-11-01）。
+            *
+            * ⚠ 书架模式下这两个按钮点什么都没反应 —— 它们控制的是
+            *   编辑器那三栏的显隐，书架上没有栏可收。
+            *   点不动比不显示更糟：用户会以为软件卡了。
+            */}
+          {view === 'editor' && CARD_TOGGLES.map((c) => {
             const on = !hiddenPanes.includes(c.pane);
             return (
               <button
@@ -2033,15 +2824,33 @@ const pickProject = useCallback(async (id) => {
                 data-card-toggle={c.pane}
                 aria-pressed={on}
                 onClick={() => togglePane(c.pane)}
-                className="px-2 py-1 rounded text-[12px] whitespace-nowrap"
-                style={{
-                  background: on ? 'var(--accent-soft)' : 'transparent',
-                  color: on ? 'var(--ink)' : 'var(--ink-soft, #c2c2cc)',
-                  opacity: on ? 1 : 0.75,
-                }}
-                title={on ? `收起${c.label}（腾出地方给目录和文件预览）` : `展开${c.label}`}
+                /**
+                 * 2026-11-02 苹果风：**只留图标，不留文字**。
+                 *
+                 * 苹果的工具栏从来不写对话列表这种标签 —— 一堆图标排着，
+                 * 把解释放进 tooltip。文字一多，界面立刻变成后台管理系统。
+                 *
+                 * ⚠ 但**必须有 title**：纯图标没文字，不给 tooltip 就是在猜。
+                 * ⚠ 选中态别用 --accent-soft：那个变量会被自定义颜色重算，
+                 *   用户把强调色调深后选中态会变成一块深色（实测黑底白字）。
+                 *   直接按 accent 算 14% 透明底。
+                 */
+                /**
+                 * ⚠⚠ 底色/字色/过渡**全部交给 `.tb-btn`**（index.css 末尾），
+                 *   这里只留 `data-on` 这个开关信号。
+                 *
+                 *   原来这一坨是 inline style：`transition` 写了但没有 hover 态，
+                 *   所以除了开关那一瞬间变色，**什么动画都不会发生**。
+                 *   而 inline style 的优先级高于任何选择器，:hover 规则盖不过它，
+                 *   想加动画就只能把它搬进 CSS。详见 index.css 那段注释。
+                 */
+                data-on={on ? '1' : '0'}
+                className="tb-btn w-7 h-7 flex items-center justify-center rounded-lg"
+                title={on ? `收起${c.label}` : `展开${c.label}`}
               >
-                {c.icon} {c.label}
+                {/* ⚠ 只留 emoji，不配文字 —— 羽毛菌：「这里面本来就有图标，
+                    直接把文字去掉不就行了」*/}
+                <span className="tb-ico text-[13px] leading-none">{c.icon}</span>
               </button>
             );
           })}
@@ -2068,40 +2877,62 @@ const pickProject = useCallback(async (id) => {
           data-testid="win-controls"
           style={{ WebkitAppRegion: 'no-drag' }}
         >
-          {[
-            { key: 'min', label: '最小化', glyph: '─', act: () => window.api.win.minimize() },
-            {
-              key: 'max', label: maximized ? '还原' : '最大化',
-              glyph: maximized ? '❐' : '□',
-              act: () => window.api.win.toggleMaximize(),
-            },
-            { key: 'close', label: '关闭', glyph: '✕', act: () => window.api.win.close(), danger: true },
-          ].map((b) => (
-            <button
-              key={b.key}
-              data-win-btn={b.key}
-              title={b.label}
-              aria-label={b.label}
-              onClick={b.act}
-              className="flex items-center justify-center"
-              style={{
-                width: 46, height: '100%', border: 'none',
-                background: 'transparent',
-                color: 'var(--ink-soft)',
-                fontSize: 12, lineHeight: 1, cursor: 'default',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = b.danger ? '#c42b1c' : 'var(--paper-2)';
-                e.currentTarget.style.color = b.danger ? '#fff' : 'var(--ink)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.color = 'var(--ink-soft)';
-              }}
-            >
-              {b.glyph}
-            </button>
-          ))}
+          {/**
+            * 2026-11-06 第二次改：回到**常规图标按钮**。
+            *
+            * ⚠ 上一版是 macOS 红绿灯（三个 12px 圆点，悬停才浮符号）。
+            *   羽毛菌的原话：「你觉得按钮那么小，还搞得和红绿灯一样好看吗，
+            *   正常按钮图标，鼠标悬浮后凸显带 r 角矩形气泡底色不就行了」。
+            *   他是对的：12px 圆点认不出功能，还得先悬停才看得见符号。
+            * 现在：11px 线性图标（横线 / 方框 / 叉），平时淡，悬停浮出
+            *   7px 圆角浅底；关闭键悬停才变红（常驻红底就是之前那块红方块）。
+            * ⚠ 图形用内联 SVG 不用字符：`─ □ ✕` 在中文系统里字宽不一，
+            *   三个按钮的图标会左右错开半像素。
+            * ⚠ 点击热区 34×26，比图标大得多。
+            */}
+          <div className="win-ctrls">
+            {[
+              {
+                key: 'min', label: '最小化',
+                act: () => window.api.win.minimize(),
+                ico: <path d="M3 6.2h6" />,
+              },
+              {
+                key: 'max', label: maximized ? '还原' : '最大化',
+                act: () => window.api.win.toggleMaximize(),
+                ico: maximized
+                  ? (
+                    <>
+                      <rect x="1.8" y="3.4" width="5" height="5" rx="1" />
+                      <path d="M4 3.4V2.4a1 1 0 0 1 1-1h4.1a1 1 0 0 1 1 1v4.1a1 1 0 0 1-1 1H8.2" />
+                    </>
+                  )
+                  : <rect x="2.2" y="2.2" width="6.6" height="6.6" rx="1.4" />,
+              },
+              {
+                key: 'close', label: '关闭', danger: true,
+                act: () => window.api.win.close(),
+                ico: <path d="M2.9 2.9l5.2 5.2M8.1 2.9L2.9 8.1" />,
+              },
+            ].map((b) => (
+              <button
+                key={b.key}
+                data-win-btn={b.key}
+                title={b.label}
+                aria-label={b.label}
+                onClick={b.act}
+                className={'win-ctrl' + (b.danger ? ' win-ctrl-danger' : '')}
+              >
+                <svg
+                  viewBox="0 0 11 11" width="11" height="11" aria-hidden="true"
+                  fill="none" stroke="currentColor" strokeWidth="1.15"
+                  strokeLinecap="round" strokeLinejoin="round"
+                >
+                  {b.ico}
+                </svg>
+              </button>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -2122,10 +2953,55 @@ const pickProject = useCallback(async (id) => {
        *   而用户此刻唯一能做的、也是真正想做的事是**建项目**。
        *   详见 createConversation 里的注释。
        */}
-      <div className="flex-1 min-h-0">
+      {/**
+       * ⚠ 2026-11-02：这里必须 `flex flex-col`。原来只有 `flex-1 min-h-0`
+       *   —— 那是"作为 flex item 占多少高"，但**自己不是 flex 容器**，
+       *   孩子（Bookshelf）写的 `flex-1` 就完全不生效，高度退化成内容高度。
+       *   表现：书架底部的统计条贴着卡片，而不是固定在窗口底部。
+       */}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {/**
+          * 书架 / 编辑器二选一（2026-11-01）。
+          *
+          * ⚠ 用条件渲染而不是"盖一层遮罩"：编辑器里有一堆订阅
+          *   （文件树、对话、流式输出），藏起来但仍在跑，
+          *   切回书架时会继续吃 CPU 和内存。
+          */}
+        {view === 'shelf' ? (
+          <Bookshelf
+            projects={projects}
+            onCreate={createProjectBy}
+            onOpen={openProjectFromShelf}
+            onImport={importProjectFolder}
+            onToast={showToast}
+            /**
+             * ⚠ 必须传：书架是首屏，而**没有项目就进不了编辑器**，
+             *   编辑器才是唯一有设置入口的地方。不传的话新用户
+             *   打开软件连主题都改不了（齿轮按钮是 `{onSettings && …}` 条件渲染）。
+             */
+            onSettings={() => openSettings()}
+            /**
+             * 每日目标（2026-11-02）：横幅上"目标 N 字/天"点一下就地改。
+             * ⚠ 存 **config** 而不是每个项目：这是"我一天写多少"的个人习惯，
+             *   换本书不该重设一遍。config:set 会返回保存后的完整配置，
+             *   走 applyConfig 统一入口，和设置页改配置是同一条路。
+             */
+            dailyGoal={config && config.dailyGoal}
+            onSetDailyGoal={async (n) => {
+              try {
+                const cfg = await window.api.config.set({ dailyGoal: n });
+                applyConfig(cfg);
+                showToast && showToast(`每日目标已改为 ${n.toLocaleString('zh-CN')} 字`);
+              } catch (e) {
+                showToast && showToast(`每日目标没存上：${e.message || e}`);
+              }
+            }}
+          />
+        ) : (
         <SplitPanes
           appVersion={appVersion}
           hidden={hiddenPanes}
+          closing={closingPanes}
           panes={[
             {
               key: 'conversations',
@@ -2210,11 +3086,13 @@ const pickProject = useCallback(async (id) => {
                   onSwitchProject={() => openSwitcher(false)}
                   sortBy={treeSort}
                   onSortChange={changeTreeSort}
+                  focusDir={focusDir}
                 />
               ),
             },
           ]}
         />
+        )}
       </div>
 
       {/* ---------- 底部状态栏：已移除 ---------- */}
@@ -2229,6 +3107,46 @@ const pickProject = useCallback(async (id) => {
          这里不再有任何横跨全宽的条。错误提示移到了底座里
          ——它属于"出事了"的提示，跟着设置入口一起待在第 1 栏
          不会侵占正文空间，而顶栏本来也有一处状态显示。*/}
+
+      {/* ---------- 生成封面：居中弹窗 ----------
+        * 入口在**快捷工具栏**（羽毛菌：「封面功能按钮应该放在快捷工具那一栏」）。
+        * 它要能盖在书架和编辑器上面，所以挂在根层，不跟着 view 走。 */}
+      {showCover && (
+        <CoverModal
+          projectId={projectId}
+          projectName={currentProject?.name || ''}
+          penName={config && config.penName}
+          onClose={() => setShowCover(false)}
+          onToast={showToast}
+          /**
+           * 设成封面后要**立刻**刷新书架。
+           * ⚠ 只 rely on 重新拉 list 不够：书架拿的是 projects 数组，
+           *   里面 cover_path 还是旧的 —— 不刷新的话用户点了"设为封面"，
+           *   书架看上去毫无变化，会以为没生效。
+           */
+          onSaved={() => { refreshProjects(); }}
+        />
+      )}
+
+      {/**
+       * 起名 / 脑洞 / 灵感碎片（2026-11-03）。
+       *
+       * ⚠ 这三个**不再走 ToolsPanel**：那个面板是"打开一个 md 随便写"的
+       *   通用模板，而羽毛菌要的是「先填要素 → 模型出初稿 → 改完存」。
+       *   同一个弹窗组件 + 三套配置，差别只在字段和动作。
+       */}
+      {toolModal && (
+        <ToolModal
+          mode={toolModal}
+          projectId={projectId}
+          /** 题材从项目里带过去，别让用户再选一次 */
+          genre={(currentProject && currentProject.genre) || ''}
+          onClose={() => setToolModal(null)}
+          onToast={showToast}
+          /** 存完要刷新文件树：新文件得立刻出现在左栏，否则用户以为没存上 */
+          onSaved={() => refreshTree()}
+        />
+      )}
 
       {/* ---------- 回收站：居中弹窗 ---------- */}
       {trashOpen && (
@@ -2261,6 +3179,14 @@ const pickProject = useCallback(async (id) => {
         />
       )}
 
+      {/* ---------- 使用教程：可随时按按钮关闭的弹窗 ---------- */}
+      {showGuide && (
+        <GuideModal
+          onClose={() => setShowGuide(false)}
+          onOpenSettings={openSettings}
+        />
+      )}
+
       {/* ---------- 设置页：整页覆盖 ---------- */}
       {showSettings && (
         <SettingsPage
@@ -2271,6 +3197,12 @@ const pickProject = useCallback(async (id) => {
           projects={projects}
           onToast={showToast}
           initialCat={settingsCat}
+          /**
+           * ⚠ 装完技能/角色卡之后要通知 App 重拉引用源（2026-10-29）。
+           *   不通知的话，用户从广场装完技能回到对话，@ 面板里看不到它 ——
+           *   必须重启软件才出现，用户会以为"下载了但没装上"。
+           */
+          onDataChanged={bump}
         />
       )}
       {/* ---------- 审批弹窗：盖在设置页之上 ---------- */}
@@ -2301,6 +3233,150 @@ const pickProject = useCallback(async (id) => {
         onAgree={agreeAndSend}
         onCancel={cancelAgreement}
       />
+      {/* 拆书：章节勾选（2026-10-28）。
+          ⚠ 必须条件渲染 —— 组件本身是一层 fixed 全屏遮罩，
+             `book` 为 null 时若还挂着，整个界面会被一层透明遮罩挡住点不动。 */}
+      {analyzeBook && (
+        <ChapterPicker
+          book={analyzeBook}
+          onCancel={() => setAnalyzeBook(null)}
+          onConfirm={(sel) => {
+            setAnalyzeBook(null);
+            /**
+             * ⚠ 不再发进对话（2026-10-28）：
+             *   拆书产出几万字，进历史会拖累后面每一轮，而它只是一次性解析。
+             *   改成开独立窗口，结果存成文件，需要时用 @ 引用。
+             */
+            setAnalyzeJob({
+              name: sel.name,
+              body: sel.body,
+              count: sel.count,
+              firstTitle: sel.title,
+              mode: sel.mode,
+            });
+          }}
+        />
+      )}
+
+      {/* 拆书独立窗口（2026-10-28）：产出不进对话，完成后保存成文件 */}
+      {analyzeJob && (
+        <BookAnalyzer
+          name={analyzeJob.name}
+          body={analyzeJob.body}
+          count={analyzeJob.count}
+          firstTitle={analyzeJob.firstTitle}
+          mode={analyzeJob.mode}
+          projectId={projectId}
+          onClose={() => setAnalyzeJob(null)}
+          onToast={showToast}
+        />
+      )}
+      {/* 新版本提示（2026-10-29）：浮在顶部中央，不占布局、不挡操作区，
+          关掉后本次启动不再出现。⚠ 没有自动更新——exe 没签名，下来也装不上。 */}
+      {updateInfo && (
+        <div
+          className="fixed left-1/2 -translate-x-1/2 top-2 z-50 flex items-center gap-3 px-4 py-2 rounded-lg"
+          style={{
+            background: 'var(--paper)',
+            border: '1px solid var(--line)',
+            boxShadow: '0 8px 24px -6px rgba(0,0,0,.35)',
+          }}
+        >
+          <span className="text-[12px]" style={{ color: 'var(--ink)' }}>
+            新版本 <b>v{updateInfo.latest}</b> 已发布
+            <span className="ml-1" style={{ color: 'var(--ink-soft)' }}>
+              （当前 v{updateInfo.current}）
+            </span>
+          </span>
+          <button
+            onClick={() => window.api.app.openExternal(updateInfo.url)}
+            className="px-2.5 py-1 rounded text-[12px]"
+            style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+          >
+            去下载
+          </button>
+          <button
+            onClick={() => {
+              sessionStorage.setItem('updateDismissed', '1');
+              setUpdateInfo(null);
+            }}
+            className="text-[15px] leading-none px-1"
+            style={{ color: 'var(--ink-soft)' }}
+            title="本次启动不再提示"
+          >
+            ×
+          </button>
+        </div>
+      )}
+      {/* 同步维护文档的询问（2026-10-29）。
+          写完章节后问一句，用户点头才动摘要/人物库/世界观 ——
+          那三样是长期资料，模型改错了用户不一定会发现。 */}
+      {/**
+        * 「同步维护文档」询问（2026-10-30 改位置）。
+        *
+        * ⚠ 原来贴在 `bottom-4`，正好压住输入框上方 ——
+        * 用户的原话：「这个更新维护文档的弹窗怎么在最底下，不方便看啊」。
+        * 回答区是纵向滚动的，用户视线多半停在**刚写完的那段正文**上，
+        * 弹窗出现在窗口最底下等于在他视野之外，很容易漏掉。
+        *
+        * 改成屏幕中央 + 半透明遮罩：出现时视线一定被拉过去，
+        * 而且它本来就是个"要不要继续"的决策点，值得打断一下。
+        * ⚠ 点遮罩可以关掉（等同「暂不更新」），不强迫用户只在两个按钮里选。
+        */}
+      {syncAsk && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ background: 'rgba(0,0,0,.38)' }}
+          onClick={() => setSyncAsk(null)}
+        >
+          <div
+            className="rounded-xl px-5 py-4"
+            style={{
+              background: 'var(--paper)',
+              border: '1px solid var(--line)',
+              boxShadow: '0 20px 50px -12px rgba(0,0,0,.5)',
+              maxWidth: 540,
+              width: '100%',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[13px] mb-2" style={{ color: 'var(--ink)' }}>
+              <b>{syncAsk.paths.join('、')}</b> 已保存。
+              <span style={{ color: 'var(--ink-soft)' }}>要同步更新维护文档吗？</span>
+            </div>
+            <div className="text-[11.5px] mb-3" style={{ color: 'var(--ink-soft)' }}>
+              章节摘要 / 人物库 / 世界观 —— 只改确实需要改的地方，不动其他段落。
+            </div>
+            <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                const paths = syncAsk.paths.join('、');
+                setSyncAsk(null);
+                send(
+                  `刚写完 ${paths}。请同步更新维护文档：\n`
+                  + '· 章节/章节摘要.md —— 追加本章摘要（150 字以内，按已有格式）\n'
+                  + '· 设定/人物库.md —— **只在出现新角色、或已有角色有实质变化时**才改\n'
+                  + '· 设定/世界观.md —— **只在出现新设定时**才改\n\n'
+                  + '⚠ 只改确实需要改的地方，**不要顺手润色其他段落**，也不要重写整个文件。\n'
+                  + '改之前先读一遍现有内容，按它的格式来。'
+                );
+              }}
+              className="px-3 py-1.5 rounded text-[12px]"
+              style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+            >
+              更新维护文档
+            </button>
+            <button
+              onClick={() => setSyncAsk(null)}
+              className="px-3 py-1.5 rounded text-[12px]"
+              style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)' }}
+            >
+              暂不更新
+            </button>
+          </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

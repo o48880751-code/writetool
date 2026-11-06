@@ -19,8 +19,8 @@
  *   build/icon-16.png … icon-256.png   （7 种尺寸）
  *   build/icon.ico                     （含全部 7 种尺寸的 BMP 容器）
  *
- * 图形含义：一张纸（文本行）+ 一道竖笔（毛笔）+ 墨点。极简，因为小尺寸下
- * 每多一个元素就多一份噪点。
+ * 图形含义：**一卷正在展开的纸**（见 scrollCenterline 的注释）。
+ * 一条连续曲线，小尺寸下也只有一个轮廓，不会糊成一团。
  */
 
 const fs = require('node:fs');
@@ -184,36 +184,104 @@ const stroke = (test, w) => (px, py) => {
 
 // ---------------------------------------------------------------- 绘制
 
+/**
+ * 卷轴的中心线与宽度。
+ *
+ * ## 造型说明（2026-11-03 换标）
+ *
+ * 旧图标是「一张纸 + 一支笔 + 墨点」——那是"写作工具"的通用图形，
+ * 和别的写作软件长得一样，没有任何辨识度。
+ *
+ * 新标记：**一卷正在展开的纸**。一条线从展开的纸尾起笔，绕进去收成卷，
+ * 一笔连成。它同时是：
+ *   · 「长卷」的字面形象（卷起来的纸）
+ *   · 「还在写」的状态（纸还没卷完）
+ *   · 一条笔迹（收笔处渐细）
+ *
+ * ## 参数是画出来比的（icon-lab 五轮，见工作区记忆）
+ * · 1.15 圈：再多一圈小尺寸就糊成实心圆；
+ * · 内半径 36：留出中心孔，16px 下才看得出是「卷」而不是 Q；
+ * · 纸尾 70 长、-32 度：平出去像 Q，垂下去像 9，这个角度最像纸在展开；
+ * · 笔宽 36 → 14：收笔要细，但不能细到 16px 就消失。
+ *
+ * @returns {Array<{x:number,y:number,w:number}>} 采样点（256 设计坐标系）
+ */
+function scrollCenterline(opts) {
+  const o = Object.assign({
+    rOuter: 74, rInner: 36, turns: 1.15, tailLen: 70, tailAng: -32,
+    w0: 36, w1: 14, steps: 260,
+  }, opts || {});
+  const cx = 134, cy = 124;
+  const a0 = 148 * Math.PI / 180;
+  const sx = cx + Math.cos(a0) * o.rOuter;
+  const sy = cy + Math.sin(a0) * o.rOuter;
+  const ta = o.tailAng * Math.PI / 180;
+  const ex = sx + Math.cos(ta) * o.tailLen;
+  const ey = sy - Math.sin(ta) * o.tailLen;
+  // 直线段在参数 t 上占的比例：按长度分，速度才均匀
+  const circ = 2 * Math.PI * o.rOuter * o.turns;
+  const flap = (o.tailLen / (o.tailLen + circ)) * 0.5;
+
+  const pts = [];
+  for (let i = 0; i <= o.steps; i++) {
+    const t = i / o.steps;
+    let x, y, w;
+    if (t < flap) {
+      const k = t / flap;
+      x = ex + (sx - ex) * k;
+      y = ey + (sy - ey) * k;
+      w = o.w1 + (o.w0 - o.w1) * k;
+    } else {
+      const k = (t - flap) / (1 - flap);
+      const ang = a0 + k * o.turns * Math.PI * 2;
+      const r = o.rOuter - (o.rOuter - o.rInner) * Math.pow(k, 0.9);
+      x = cx + Math.cos(ang) * r;
+      y = cy + Math.sin(ang) * r;
+      w = o.w0 - (o.w0 - o.w1) * Math.pow(k, 1.25);
+    }
+    pts.push({ x, y, w });
+  }
+  return pts;
+}
+
+/** 沿中心线铺一串圆点 → 一条粗细渐变的墨带 */
+function scrollShape(opts) {
+  const pts = scrollCenterline(opts);
+  return (px, py) => {
+    for (const p of pts) {
+      const r = p.w / 2;
+      const dx = px - p.x, dy = py - p.y;
+      if (dx * dx + dy * dy <= r * r) return true;
+    }
+    return false;
+  };
+}
+
 /** 画一张图标（256 单位坐标系，Canvas 会缩放到目标尺寸） */
 function drawIcon(size) {
-  const c = new Canvas(size, size <= 32 ? 6 : 4);
+  const c = new Canvas(size, size <= 32 ? 8 : 4);
   const K = 256;   // 设计坐标系边长
 
-  // 背景：大圆角方块。小尺寸（≤32）不画圆角，任务栏里圆角会糊成一团。
-  const br = size <= 32 ? 0 : 48;
-  c.shape(PAPER, 1, br === 0
+  /**
+   * ⚠ 底色是**墨色实底**，不是宣纸白。
+   *   同一条曲线在浅底上读成「6」、在深底上读成「卷」——
+   *   摆在一起看过：深底白线在 16px 任务栏里轮廓最清楚，
+   *   而且深色方块本身就是一个"品牌色块"，一排图标里一眼能认出来。
+   * ⚠ 小尺寸不画圆角：16px 上 3px 的圆角只会把四角糊掉。
+   */
+  const br = size <= 32 ? 0 : 52;
+  c.shape(INK, 1, br === 0
     ? () => true
     : roundRect(0, 0, K, K, br));
 
-  // 纸
-  c.shape(WHITE, 1, roundRect(52, 40, 128, 176, 10));
-  // 纸的描边：画一圈外框再画内芯，形成边框
-  c.shape(LINE, 1, roundRect(50, 38, 132, 180, 11));
-  c.shape(WHITE, 1, roundRect(53, 41, 126, 174, 9));
-
-  // 文本行（第三条用墨色，表示「刚写到这」）
-  c.shape(LINE, 1, seg(76, 86, 156, 86, 7));
-  c.shape(LINE, 1, seg(76, 112, 156, 112, 7));
-  c.shape(LINE, 1, seg(76, 138, 126, 138, 7));
-  c.shape(INK, 1, seg(76, 164, 112, 164, 7));
-
-  // 笔：竖杆 + 笔尖
-  c.shape(ACCENT, 1, seg(188, 56, 188, 168, 16));
-  c.shape(ACCENT, 1, triangle([[188, 160], [177, 200], [199, 200]]));
-
-  // 墨点：两点，大小不同，避免对称呆板
-  c.shape(ACCENT, 0.9, circle(166, 208, 9));
-  c.shape(ACCENT, 0.55, circle(145, 219, 5));
+  /**
+   * 小尺寸要**加粗**：16px 时 36 单位只等于 2.25px，
+   * 按原比例画，收笔那段细到看不见，整枚图标像掉了个口子。
+   */
+  const small = size <= 32;
+  c.shape(PAPER, 1, scrollShape(small
+    ? { w0: 44, w1: 20, turns: 1.1, rOuter: 76, rInner: 34, tailLen: 62 }
+    : {}));
 
   return c.toRgba8();
 }
@@ -363,34 +431,76 @@ function main() {
   // 单张大图，供 Linux/macOS 与 README 使用
   fs.copyFileSync(path.join(OUT_DIR, 'icon-256.png'), path.join(OUT_DIR, 'icon.png'));
 
-  // 同时留一份 SVG 源，���便日后改设计（但打包只吃 ico/png）
-  fs.writeFileSync(path.join(OUT_DIR, 'icon.svg'), svgSource(), 'utf8');
-  console.log('✓ icon.svg  （设计源文件）');
+  // SVG 源：给人看，同时给启动动画用（splash.html 直接引 electron/logo.svg）
+  const svg = svgSource();
+  fs.writeFileSync(path.join(OUT_DIR, 'icon.svg'), svg, 'utf8');
+  fs.writeFileSync(path.join(__dirname, 'electron', 'logo.svg'), svg, 'utf8');
+  // 顶栏品牌图标：渲染层要 import 才进得了 dist（electron/ 下那份只给启动动画用）
+  fs.mkdirSync(path.join(__dirname, 'src', 'assets'), { recursive: true });
+  fs.writeFileSync(path.join(__dirname, 'src', 'assets', 'logo.svg'), svg, 'utf8');
+  console.log('✓ icon.svg + electron/logo.svg');
+}
+
+/**
+ * 把中心线变成**闭合轮廓**（左边界 + 反向右边界）。
+ *
+ * ⚠ 为什么不直接用 `<path stroke-width>`：这条笔迹是**渐细**的，
+ *   SVG 的 stroke 只有一个固定宽度。所以按「左右各偏移半个宽度」
+ *   算出多边形，再在两端补两个圆当笔头 —— 和逐点画圆的光栅版一致。
+ */
+function scrollOutline(size) {
+  const small = size && size <= 32;
+  const pts = scrollCenterline(small
+    ? { w0: 44, w1: 20, turns: 1.1, rOuter: 76, rInner: 34, tailLen: 62 }
+    : {});
+  const n = pts.length;
+  const left = [];
+  const right = [];
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    let tx = b.x - a.x;
+    let ty = b.y - a.y;
+    const len = Math.hypot(tx, ty) || 1;
+    tx /= len; ty /= len;
+    // 法线（顺时针 90°）
+    const nx = -ty, ny = tx;
+    const h = p.w / 2;
+    left.push([p.x + nx * h, p.y + ny * h]);
+    right.push([p.x - nx * h, p.y - ny * h]);
+  }
+  const f = (v) => Math.round(v * 10) / 10;
+  const d = [
+    `M${f(left[0][0])} ${f(left[0][1])}`,
+    ...left.slice(1).map((p) => `L${f(p[0])} ${f(p[1])}`),
+    ...right.slice().reverse().map((p) => `L${f(p[0])} ${f(p[1])}`),
+    'Z',
+  ].join('');
+
+  return {
+    d,
+    caps: [
+      { x: f(pts[0].x), y: f(pts[0].y), r: f(pts[0].w / 2) },
+      { x: f(pts[n - 1].x), y: f(pts[n - 1].y), r: f(pts[n - 1].w / 2) },
+    ],
+  };
 }
 
 function svgSource() {
   const K = 256;
+  const o = scrollOutline(256);
   return `<?xml version="1.0" encoding="UTF-8"?>
-<!-- 设计源文件。改设计改这里，然后重跑 make-icon.js。
-     make-icon.js 用纯 Node 算像素渲染，不依赖 Electron/GPU，
-     所以这份 SVG 只是给人看的，改完记得同步 drawIcon()。 -->
+<!-- 设计源文件。改设计改 make-icon.js 的 scrollCenterline()，然后重跑 make-icon.js。
+     这份 SVG 是**生成物**，手改会被覆盖；它同时被启动动画（electron/splash.html）使用。 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="${K}" height="${K}" viewBox="0 0 ${K} ${K}">
-  <rect width="${K}" height="${K}" rx="48" fill="rgb(${PAPER})"/>
-  <rect x="50" y="38" width="132" height="180" rx="11" fill="rgb(${LINE})"/>
-  <rect x="53" y="41" width="126" height="174" rx="9" fill="rgb(${WHITE})"/>
-  <g stroke="rgb(${LINE})" stroke-width="7" stroke-linecap="round">
-    <line x1="76" y1="86" x2="156" y2="86"/>
-    <line x1="76" y1="112" x2="156" y2="112"/>
-    <line x1="76" y1="138" x2="126" y2="138"/>
-  </g>
-  <line x1="76" y1="164" x2="112" y2="164" stroke="rgb(${INK})" stroke-width="7" stroke-linecap="round"/>
-  <line x1="188" y1="56" x2="188" y2="168" stroke="rgb(${ACCENT})" stroke-width="16" stroke-linecap="round"/>
-  <path d="M188 160 L177 200 L199 200 Z" fill="rgb(${ACCENT})"/>
-  <circle cx="166" cy="208" r="9" fill="rgb(${ACCENT})" opacity="0.9"/>
-  <circle cx="145" cy="219" r="5" fill="rgb(${ACCENT})" opacity="0.55"/>
+  <rect width="${K}" height="${K}" rx="52" fill="rgb(${INK})"/>
+  <path d="${o.d}" fill="rgb(${PAPER})"/>
+  <circle cx="${o.caps[0].x}" cy="${o.caps[0].y}" r="${o.caps[0].r}" fill="rgb(${PAPER})"/>
+  <circle cx="${o.caps[1].x}" cy="${o.caps[1].y}" r="${o.caps[1].r}" fill="rgb(${PAPER})"/>
 </svg>
 `;
 }
 
 if (require.main === module) main();
-module.exports = { drawIcon, encodePng, buildIco, SIZES };
+module.exports = { drawIcon, encodePng, buildIco, SIZES, scrollCenterline, scrollOutline, svgSource };

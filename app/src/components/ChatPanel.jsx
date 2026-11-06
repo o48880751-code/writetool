@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Icon } from './Icons.jsx';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import CtxMeter from './CtxMeter.jsx';
+import { WelcomePanel } from './Welcome.jsx';
 
 /**
  * 用了但没 import 的 hook **只有真渲染才炸**（打包不报错、语法合法）。
@@ -11,7 +13,8 @@ import {
   LEVEL_LABEL, LEVEL_HINT, LEVEL_ICON,
   DEFAULT_LEVEL, DEFAULT_LABEL, DEFAULT_HINT,
 } from '../think-levels.js';
-import { ToolCallList } from './ToolCards.jsx';
+import { ToolCallList, ToolCallsSummary } from './ToolCards.jsx';
+import RichText from './RichText.jsx';
 
 /**
  * 对话面板 —— 主交互区。
@@ -181,6 +184,54 @@ function MessageActions({ m, canUndo, onAction }) {
   );
 }
 
+/**
+ * 从一条消息里取出它 @ 过的引用（2026-10-29）。
+ *
+ * ⚠ 老消息没有 `refs` 字段（库 v2 及以前），一律返回空数组 ——
+ *   **必须容错**：`JSON.parse(null)` 会抛，"（未定义）" 会让整个消息列表白屏。
+ *   那批历史消息本来就看不到引用，这是正常的，不该报错。
+ */
+function refsOf(m) {
+  if (!m || !m.refs) return [];
+  try {
+    const arr = JSON.parse(m.refs);
+    return Array.isArray(arr) ? arr.filter((r) => r && r.name) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * 这一轮的工具调用块（2026-10-30 抽出）。
+ *
+ * ## 为什么抽出来
+ *
+ * 它要在**两个位置**各渲染一次，但任何时候只出现一个：
+ *   · 生成中 → 挂在流式回答**之前**（还看不到消息列表里的那条）
+ *   · 生成完 → 挂到消息列表里**最后一条回答之前**
+ *
+ * ## 为什么不能只放一处
+ *
+ * 原来只放在消息列表**之后**，于是生成结束后它跑到了所有消息的最下面：
+ * 用户先看到一大段回答，再看到「读取文件 / 列出目录」——
+ * **思考过程跑到结论后面去了，本末倒置**。
+ * 工具调用是"怎么得出这段回答"的，必须摆在回答上方。
+ */
+function ToolBlock({ items, collapsed, onExpand }) {
+  if (!items || !items.length) return null;
+  if (collapsed) return <ToolCallsSummary items={items} onExpand={onExpand} />;
+  return (
+    <div className="space-y-1.5">
+      {items.some((t) => t.status === 'running') && (
+        <div className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>
+          正在用工具…（{items.filter((t) => t.status === 'running').length} 项进行中）
+        </div>
+      )}
+      <ToolCallList items={items} />
+    </div>
+  );
+}
+
 export default function ChatPanel({
   conversation,
   messages,
@@ -228,6 +279,14 @@ export default function ChatPanel({
    */
   toolCalls = [],
   /**
+   * 生成结束后把工具卡片收成一行（2026-10-30）。
+   *
+   * 收起来不等于删掉：正文吐完后一屏十几行「完成」会把回复顶出屏幕，
+   * 但直接清空又让人回头翻不到"它到底读了什么"。所以要一个摘要行 + 展开。
+   */
+  toolsCollapsed = false,
+  onExpandTools = null,
+  /**
    * 这一轮放不放行工具。
    *
    * ⚠ 与设置页那个总开关是**两件事**：
@@ -256,6 +315,8 @@ export default function ChatPanel({
   onQuickTool = null,
   activeTool = null,
   toolsOpen = false,
+  /** 全局配置（含 noHistory 开关）。⚠ 这里只读，写要自己调 config.set */
+  config = null,
   /**
    * 范围守卫把模型连接关掉了（与小说创作无关的请求被拦下）。
    *
@@ -271,8 +332,41 @@ export default function ChatPanel({
   auditPaused = false,
   /** 点「继续使用」：解除暂停 */
   onAuditResume,
+  /**
+   * 欢迎页（2026-11-05）。
+   *
+   * 'first' = 这个项目还没有对话，给「新书启航 / 搭建大纲 / 使用教程」；
+   * 'returning' = 已经有对话，给「继续写作 / 规划章纲 / 查询冲突」；
+   * null = 不接管空状态，还按原来那句提示语走。
+   *
+   * ⚠ 动作全部由 App 实现，这里只转发 key —— 组件不碰 IPC，也不自己发消息。
+   */
+  welcomeMode = null,
+  onWelcomeAction = null,
 }) {
   const [text, setText] = useState('');
+
+  /**
+   * 「不带历史」开关（2026-10-29）。
+   *
+   * 拆一章、翻译一段这类一次性任务，跟前面对话毫无关系。
+   * 打开之后主进程只发 system + 这条提问，**整个历史都不带**。
+   *
+   * ⚠ 存的是**全局配置**（`config.noHistory`），不是一次性的临时开关：
+   *   用户开了就是"以后都这样"，直到他再点一次关掉 —— 行为要可预期，
+   *   不能点一次只影响一轮，那样他会以为自己关掉了其实没关。
+   */
+  const [noHistory, setNoHistory] = useState(!!(config && config.noHistory));
+  useEffect(() => {
+    setNoHistory(!!(config && config.noHistory));
+  }, [config && config.noHistory]);
+
+  const toggleNoHistory = () => {
+    const next = !noHistory;
+    setNoHistory(next);
+    // ⚠ 写失败不弹错：这个开关最坏的结果只是多带了历史，不值得打断用户
+    window.api.config.set({ noHistory: next }).catch(() => {});
+  };
   const [refs, setRefs] = useState([]);          // 引用的 skill / file
   const [picker, setPicker] = useState(null);     // 'skill' | 'file' | null
   const flowRef = useRef(null);
@@ -285,13 +379,53 @@ export default function ChatPanel({
     setPicker(null);
   }, [conversation?.id]);
 
-  // 新消息或流式输出时滚到底。
+  /**
+   * 是否停在底部（2026-10-31 加，「回到底部」按钮要用）。
+   *
+   * ## 顺带修掉的一个更烦的毛病
+   *
+   * 原来这个 effect 是**无条件** `scrollTop = scrollHeight` ——
+   * 只要模型还在吐字，用户往上一翻就被拽回底部，**根本翻不住**。
+   * 现在只在「用户本来就在底部」时才跟着滚。
+   */
+  const [atBottom, setAtBottom] = useState(true);
+  /** 给 effect 读的即时值：放依赖里会让每次滚动都重挂 effect */
+  const atBottomRef = useRef(true);
+
+  const syncAtBottom = () => {
+    const el = flowRef.current;
+    if (!el) return;
+    // 留 80px 容差：字体渲染、图片加载都会让 scrollHeight 抖几像素，
+    // 卡在 1px 上会让按钮闪个不停
+    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    atBottomRef.current = near;
+    setAtBottom((prev) => (prev === near ? prev : near));
+  };
+
+  const scrollToBottom = () => {
+    const el = flowRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    atBottomRef.current = true;
+    setAtBottom(true);
+  };
+
+  // 新消息或流式输出时滚到底 —— **只在已经在底部时**。
   // ⚠ toolCalls.length 也要进依赖：模型查完资料开始写正文时，
   //   卡片会从 1 张变成 2 张，不跟着滚的话用户会以为程序停了。
   useEffect(() => {
+    if (!atBottomRef.current) return;
     const el = flowRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages?.length, streamingText, generating, toolCalls.length]);
+
+  // 换对话要强制回底：上一轮的滚动位置对这一段没意义
+  useEffect(() => {
+    atBottomRef.current = true;
+    setAtBottom(true);
+    const el = flowRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [conversation?.id]);
 
   // 快捷键：Enter 发送，Shift+Enter 换行
   const onKeyDown = (e) => {
@@ -411,7 +545,7 @@ export default function ChatPanel({
              差出来几 px —— 分隔线因此不在同一水平。写死高度 + items-center 解决。*/
           className="quick-tools shrink-0 px-3 h-8 flex items-center gap-1"
           data-testid="rail-head-main"
-          style={{ borderBottom: '1px solid var(--line)', background: 'var(--paper)' }}
+          style={{ background: 'var(--paper)' }}
         >
           {visibleTools.map((t) => {
             const on = toolsOpen && activeTool === t.key;
@@ -420,10 +554,22 @@ export default function ChatPanel({
                 key={t.key}
                 data-qt={t.key}
                 onClick={() => onQuickTool && onQuickTool(t)}
-                className="px-2 py-1 rounded text-[12px] whitespace-nowrap shrink-0"
+                className="px-2.5 py-1 rounded-full text-[11.5px] whitespace-nowrap shrink-0 flex items-center gap-1"
                 style={{
-                  background: on ? 'var(--accent-soft)' : 'transparent',
-                  color: on ? 'var(--ink)' : 'var(--ink-soft)',
+                  /**
+                   * 2026-11-02 苹果化：每个工具做成**胶囊气泡**（羽毛菌：
+                   * 「文字保留就行了，可以加气泡圈，像苹果 UI 就行」）。
+                   *
+                   * ⚠ 原来是透明底 + 悬停才变 —— 一排文字飘在工具栏上，
+                   *   分不清哪几个是可点的。给了底色才像一组按钮。
+                   * ⚠ 圆角用 999（胶囊），和输入框那排 chip 保持同一套语言。
+                   */
+                  backgroundColor: on
+                    ? 'color-mix(in srgb, var(--accent) 16%, transparent)'
+                    : 'var(--paper-2)',
+                  color: on ? 'var(--accent)' : 'var(--ink-soft)',
+                  fontWeight: on ? 600 : 400,
+                  transition: 'background-color 140ms cubic-bezier(.25,.1,.25,1), color 140ms',
                 }}
                 title={t.hint}
               >
@@ -494,59 +640,102 @@ export default function ChatPanel({
         </>
       )}
 
-      <div ref={flowRef} className="chat-surface flex-1 overflow-y-auto overflow-x-hidden px-5 py-4">
+      <div ref={flowRef} className="chat-surface flex-1 overflow-y-auto overflow-x-hidden px-5 py-4" onScroll={syncAtBottom}>
         {!messages?.length && (
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center max-w-sm">
-              {/* ⚠ 零项目时不能说「开始一个新对话」——
-                  对话挂在项目下，这会儿连输入框都发不出去。
-                  空状态是用户第一次见到这个界面时**唯一**会读的文字，
-                  它必须说清"下一步点哪"。 */}
-              <div className="text-[15px] mb-2" style={{ color: 'var(--ink)' }}>
-                {hasProject ? '开始一个新对话' : '先建一个小说项目'}
-              </div>
-              <div className="text-[12px] leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
-                {hasProject ? (
-                  <>
-                    左边是对话列表，右边是章节与设定。<br />
-                    输入框旁的「技能」「文件」可以把写作要求与设定直接带进这一轮。
-                  </>
-                ) : (
-                  <>
-                    对话、章节、设定都挂在项目下，所以得先有项目。<br />
-                    点左上角第 1 栏的「＋ 新建项目」，或右下角第 4 栏的「（未选项目）」。
-                  </>
-                )}
+          welcomeMode && onWelcomeAction ? (
+            <WelcomePanel mode={welcomeMode} onAction={onWelcomeAction} />
+          ) : (
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center max-w-sm">
+                {/* ⚠ 零项目时不能说「开始一个新对话」——
+                    对话挂在项目下，这会儿连输入框都发不出去。
+                    空状态是用户第一次见到这个界面时**唯一**会读的文字，
+                    它必须说清"下一步点哪"。 */}
+                <div className="text-[15px] mb-2" style={{ color: 'var(--ink)' }}>
+                  {hasProject ? '开始一个新对话' : '先建一个小说项目'}
+                </div>
+                <div className="text-[12px] leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+                  {hasProject ? (
+                    <>
+                      左边是对话列表，右边是章节与设定。<br />
+                      输入框旁的「技能」「文件」可以把写作要求与设定直接带进这一轮。
+                    </>
+                  ) : (
+                    <>
+                      对话、章节、设定都挂在项目下，所以得先有项目。<br />
+                      点左上角第 1 栏的「＋ 新建项目」，或右下角第 4 栏的「（未选项目）」。
+                    </>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )
         )}
 
         <div className="max-w-5xl mx-auto space-y-3">
-          {messages?.map((m) => (
+          {messages?.map((m, i) => {
             /**
-             * ⚠⚠ 结构：头像+气泡 是一行，**操作条在下一行**（2026-10-15 羽毛菌：
-             *   「这个复制删除的按钮应该对话文字框的下方而不是侧方，
-             *     work buddy 也是在下方啊」）。
-             *
-             * 之前是三个元素横排（头像 / 气泡 / 操作条），
-             * 操作条挤在气泡**侧面**，短消息时那一段空白特别难看。
-             *
-             * ⚠ 拆成 `.msg-head` 是为了让 CSS 只需要管两件事：
-             *   这一行左右排（用户右对齐 / 模型左对齐），操作条单独占一行。
+             * 最后一条回答 → 工具块要插在它**前面**（2026-10-30）。
+             * 详见 ToolBlock 的注释：思考过程必须在结论之上。
              */
-            <div key={m.id} className={`msg-row ${m.role === 'user' ? 'is-user' : 'is-ai'}`}>
+            const isLastAssistant = m.role === 'assistant' && i === messages.length - 1;
+            return (
+              <Fragment key={m.id}>
+                {isLastAssistant && !generating && (
+                  <ToolBlock items={toolCalls} collapsed={toolsCollapsed} onExpand={onExpandTools} />
+                )}
+            {/* ⚠ 结构：头像+气泡 一行，操作条在下一行（2026-10-15 羽毛菌：
+                「这个复制删除的按钮应该对话文字框的下方而不是侧方」）。
+                ⚠ 这里必须是花括号包裹的 JSX 注释 —— 子元素位置写裸注释
+                会被当成文本节点渲染到界面上（2026-10-30 搬进 Fragment 时踩过）。
+                拆成 .msg-head 是为了让 CSS 只管两件事：这一行左右排、
+                操作条单独占一行。 */}
+            <div className={`msg-row ${m.role === 'user' ? 'is-user' : 'is-ai'}`}>
               <div className="msg-head">
-                {/* 头像：跟 workbuddy 一样，一眼分清谁在说话 */}
-                <div className={`msg-avatar ${m.role === 'user' ? 'user' : 'ai'}`}
-                  title={m.role === 'user' ? '你' : '模型'}>
-                  {m.role === 'user' ? '我' : 'AI'}
-                </div>
+                {/**
+                 * 头像只给 AI，**用户消息不要头像**（2026-11-03 羽毛菌：
+                 *   「把那个"我"的头像直接去掉吧，增大气泡的面积」）。
+                 *
+                 * 理由不只是审美：用户自己写的话不需要自报身份，
+                 * 那个 22px 的头像实际占掉的是**每一行气泡的可用宽度**，
+                 * 在 400px 不到的对话栏里，它比看上去贵得多。
+                 * AI 那头保留 —— 长回答需要一眼分出"这是模型说的"。
+                 */}
+                {m.role !== 'user' && (
+                  /* 助手叫「拾墨」（2026-11-03）。头像里只放一个字，22px 塞不下两个。
+                     注意这行在 && 表达式的括号里，注释必须是裸的块注释；
+                     写成 JSX 子节点那种带花括号的注释会直接语法错误。 */
+                  <div className="msg-avatar ai" title="拾墨">墨</div>
+                )}
                 <div
                   className={m.role === 'user' ? 'msg-user' : 'msg-ai'}
                   style={{ fontSize: `${fontSize || 16}px`, fontFamily: fontFamily || 'system-ui' }}
                 >
-                  {m.content}
+                  {/**
+                    * 引用标签（2026-10-29）。
+                    *
+                    * 竞品在气泡里带 `#文件名`，一眼能看出这条消息是在操作哪个文件。
+                    * 之前这些引用只存在于发送时的那一刻，落库后什么都不剩 ——
+                    * 回头翻记录只看到「删除这个文件」，完全不知道删的是哪一章。
+                    */}
+                  {refsOf(m).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-1.5">
+                      {refsOf(m).map((r, i) => (
+                        <span
+                          key={`${r.kind}-${r.id}-${i}`}
+                          className="text-[11px] px-1.5 py-0.5 rounded"
+                          style={{
+                            background: r.kind === 'skill' ? 'var(--chip-skill-bg)' : 'var(--chip-file-bg)',
+                            color: r.kind === 'skill' ? 'var(--chip-skill-ink)' : 'var(--chip-file-ink)',
+                          }}
+                          title={r.id}
+                        >
+                          {r.kind === 'skill' ? '@' : '#'}{r.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <RichText text={m.content} />
                 </div>
               </div>
               {onMessageAction && (
@@ -557,18 +746,17 @@ export default function ChatPanel({
                 />
               )}
             </div>
-          ))}
+              </Fragment>
+            );
+          })}
 
-          {/* ---------- 工具调用：贴在正文之前 ---------- */}
-          {toolCalls.length > 0 && (
-            <div className="space-y-1.5">
-              {toolCalls.some((t) => t.status === 'running') && (
-                <div className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>
-                  正在用工具…（{toolCalls.filter((t) => t.status === 'running').length} 项进行中）
-                </div>
-              )}
-              <ToolCallList items={toolCalls} />
-            </div>
+          {/**
+            * 生成中的工具块：这时那条回答还没落库，只能挂在这里
+            * （流式文字在下面，顺序仍然是"先工具、后正文"）。
+            * 生成结束后由消息列表里的 `isLastAssistant` 接管 —— 两处互斥，不会重复。
+            */}
+          {generating && (
+            <ToolBlock items={toolCalls} collapsed={false} onExpand={onExpandTools} />
           )}
 
           {/* 流式中的回答：内容追加到最后一条，避免屏幕跳两次 */}
@@ -617,7 +805,7 @@ export default function ChatPanel({
                   <div
                     className="msg-ai streaming"
                     style={{ fontSize: `${fontSize || 16}px`, fontFamily: fontFamily || 'system-ui' }}
-                  >{streamingText}</div>
+                  ><RichText text={streamingText} /></div>
                 ) : (!streamingThink ? (
                   <div
                     className="msg-ai streaming"
@@ -728,6 +916,34 @@ export default function ChatPanel({
         *   要去掉就真的去掉。
         */}
       <div className="shrink-0 px-5 pb-4 pt-2 relative z-20 chat-composer">
+        {/**
+          * 「回到底部」浮动按钮（2026-10-31 加）。
+          *
+          * ⚠ 为什么挂在这里而不是聊天容器内部：容器是 `overflow-y-auto`，
+          *   在里面 `absolute` 会跟着内容一起滚走；包一层 relative 又要动
+          *   整块 JSX 的闭合位置（今天已经因为改结构踩过一次坑）。
+          *   输入区本来就是 `relative z-20`，用 `-top-11` 把它顶到
+          *   **聊天区右下角**，位置正确、结构零改动。
+          *
+          * ⚠ 只在**不在底部**时出现：贴在底部的人不需要这个按钮。
+          */}
+        {!atBottom && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute -top-11 right-6 flex items-center gap-1 px-2.5 py-1.5 rounded-full text-[11.5px]"
+            style={{
+              background: 'var(--paper)',
+              border: '1px solid var(--line)',
+              color: 'var(--ink)',
+              boxShadow: '0 4px 14px -4px rgba(0,0,0,.35)',
+            }}
+            title="滚到最新一条"
+            data-testid="scroll-to-bottom"
+          >
+            <span style={{ fontSize: 12 }}>↓</span> 回到底部
+          </button>
+        )}
         <div className="max-w-5xl mx-auto">
 
           {/* 已选引用 */}
@@ -843,11 +1059,20 @@ export default function ChatPanel({
                  而不像一条横贯的分割线。
               ⚠ 阴影只给向下的一点点（负 spread），否则上半又会落回消息区变成那条线。
       */}
-      <div className="rounded-lg overflow-hidden"
+      {/**
+        * 2026-11-02 卡片化之后，输入框的"方向"反过来了。
+        *
+        * ⚠ 以前：消息区是浅灰 (#f5f6f8)，输入框是**白卡片浮在上面** + 描边 ——
+        *   白底靠明度差把范围画出来。
+        * ⚠ 现在：整栏本身就是白色卡片，再用白底 + 描边就**彻底糊进去**了
+        *   （实测截图里输入框几乎看不见边界）。
+        * → 改成**浅灰块**（--paper-2）+ 无描边，靠"比卡片暗一档"表达范围。
+        *   这正是苹果搜索框/输入框的做法，也正是原型里的样子。
+        */}
+      <div className="overflow-hidden"
            style={{
-             border: '1px solid var(--line)',
-             background: 'var(--paper)',
-             boxShadow: '0 3px 10px -4px rgba(0,0,0,.10)',
+             borderRadius: 14,
+             backgroundColor: 'var(--paper-2)',
            }}>
         <textarea
               ref={taRef}
@@ -859,7 +1084,7 @@ export default function ChatPanel({
                 : '说点什么…（Enter 发送，Shift+Enter 换行）'}
               rows={3}
               readOnly={scopeLocked}
-              className="w-full px-3 py-2.5 outline-none resize-none leading-relaxed"
+              className="w-full px-4 py-3 outline-none resize-none leading-relaxed"
               // ⚠ 输入框跟着**对话**字号走（羽毛菌：「然后这个输入框里的字大小要和对话框里的
               //   字大小一样变化」）。之前是写死的 text-[13.5px]，拖滑块它纹丝不动。
               style={{
@@ -939,6 +1164,14 @@ export default function ChatPanel({
                 *   合计省下约 150px，正好把第 2 栏从"默认就换行"拉回"默认不换行"。
                 */}
               <div className="flex-1" />
+
+              {/* 不带历史（2026-10-29）：放在「这一轮怎么跑」这一组，
+                  因为它改的是发送方式，不是补充材料。 */}
+              <ToolBtn
+                label="不带历史"
+                active={noHistory}
+                onClick={toggleNoHistory}
+              />
 
               {/* 思考强度：与发送同一组，因为都是"这一轮怎么跑" */}
               {thinkLevels?.length > 0 && (
@@ -1123,23 +1356,32 @@ function ToolGateChips({ gate, webReady, onOpenSettings }) {
             data-testid={`tool-chip-${c.key}`}
             title={title}
             onClick={onClick}
-            className="px-2 py-1 rounded text-[12px] flex items-center gap-1"
+            className="px-2.5 py-1 rounded-full text-[11.5px] flex items-center gap-1"
             style={{
-              // ⚠ 标红优先于放行态：缺配置时即便 chip 被选中，
-              //   显示上也必须让人看出"这东西现在跑不通"。
-              background: webBroken ? 'var(--danger-soft, #fdecec)'
-                : (active ? 'var(--accent)' : 'transparent'),
-              color: webBroken ? 'var(--danger)'
-                : (active ? 'var(--accent-ink)' : (allowed ? 'var(--ink-soft)' : 'var(--ink-faint, var(--ink-soft)')),
-              border: `1px ${webBroken || !allowed ? 'dashed' : 'solid'} `
-                + (webBroken ? 'var(--danger)' : (active ? 'var(--accent)' : 'var(--line)')),
+              /**
+               * 2026-11-02 苹果化：
+               *   · 去掉描边（虚线尤其扎眼）—— 状态全部靠**底色**表达
+               *   · 圆角改胶囊（999px）
+               *   · "缺 xxx"那几个字删掉，换成**一个小红点**
+               *     羽毛菌：「把那个缺总开关四个字去掉，太出戏了」
+               *     ⚠ 但状态不能丢 —— 圆点 + tooltip 一起用，
+               *       光删字不补标记等于把提示删了。
+               */
+              backgroundColor: webBroken
+                ? 'color-mix(in srgb, var(--danger) 14%, transparent)'
+                : (active ? 'color-mix(in srgb, var(--accent) 16%, transparent)' : 'var(--paper-2)'),
+              color: webBroken
+                ? 'var(--danger)'
+                : (active ? 'var(--accent)' : 'var(--ink-soft)'),
+              fontWeight: active ? 600 : 400,
               opacity: allowed ? 1 : 0.55,
+              transition: 'background-color 140ms cubic-bezier(.25,.1,.25,1), color 140ms',
             }}
           >
-            <span className="text-[11px]">{c.icon}</span>
+            <span className="text-[11px] leading-none">{c.icon}</span>
             {c.label}
             {webBroken
-              ? <span className="text-[10px]">缺{webMissing[webMissing.length - 1]}</span>
+              ? <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: 'var(--danger)' }} />
               : (!allowed && <span className="text-[10px]">🔒</span>)}
           </button>
         );
@@ -1160,22 +1402,26 @@ function ToolGateChips({ gate, webReady, onOpenSettings }) {
  * 未选时保持很浅：这两个按钮常驻，而真正要引起注意的是选中之后的 chip。
  */
 function ToolBtn({ label, onClick, active }) {
-  const isSkill = label === '技能';
-  // 未选：同色系的最浅一档，看得出归属但不抢眼
-  // ⚠ 颜色走变量（深浅各一套），JSX 不写死 —— 否则深色主题下是荧光块
-  const bgOn = isSkill ? 'var(--chip-skill-bg)' : 'var(--chip-file-bg)';
-  const inkOn = isSkill ? 'var(--chip-skill-ink)' : 'var(--chip-file-ink)';
-  const edgeOn = isSkill ? 'var(--chip-skill-edge)' : 'var(--chip-file-edge)';
   return (
     <button
       onClick={onClick}
       data-testid={'ref-btn-' + label}
-      className="px-2.5 py-1 rounded text-[12px]"
+      className="px-2.5 py-1 rounded-full text-[11.5px]"
       style={{
-        background: active ? bgOn : (isSkill ? 'var(--chip-skill-bg-off)' : 'var(--chip-file-bg-off)'),
-        color: active ? inkOn : (isSkill ? 'var(--chip-skill-ink-off)' : 'var(--chip-file-ink-off)'),
-        border: '1px solid ' + (active ? edgeOn : 'var(--line)'),
+        /**
+         * 2026-11-02 苹果化：不再用紫/绿两套彩色描边区分"技能"和"文件"。
+         *
+         * ⚠ 原来一个紫色一个绿色（`--chip-skill-*` / `--chip-file-*`），
+         *   一排 chip 里三种颜色，像标签打印机打的。
+         *   苹果的做法是**全中性灰**，只有"选中"这一个状态才上色。
+         *   类型靠文字本身（@技能 / @文件）区分就够了。
+         */
+        backgroundColor: active
+          ? 'color-mix(in srgb, var(--accent) 16%, transparent)'
+          : 'var(--paper-2)',
+        color: active ? 'var(--accent)' : 'var(--ink-soft)',
         fontWeight: active ? 600 : 400,
+        transition: 'background-color 140ms cubic-bezier(.25,.1,.25,1), color 140ms',
       }}
     >
       @{label}
@@ -1282,11 +1528,23 @@ function ThinkPicker({ levels, value, onChange }) {
         onClick={() => setOpen((o) => !o)}
         data-testid="think-trigger"
         title={'思考强度：当前「' + curLabel + '」。' + DEFAULT_HINT}
-        className="flex items-center gap-1 px-2 py-1 rounded text-[11.5px]"
+        className="think-trigger flex items-center gap-1 px-2 py-1 rounded-full text-[11.5px]"
         style={{
-          background: open ? 'var(--accent-soft)' : 'transparent',
-          color: 'var(--ink-soft)',
-          border: '1px solid var(--line)',
+          /**
+           * 2026-11-02 羽毛菌：「把这个框框去掉，点击之后才出现一个圆环型框，带底色」
+           *
+           * ⚠ 常态**不能有可见描边** —— 一排控件全带方框就是表单，不是工具栏。
+           *   但 border 保留 1px transparent 占位：直接删掉会让按钮窄 2px，
+           *   一排放着的东西整体左移，看着像"歪了"。
+           * ⚠ 「圆环」用 box-shadow 扩散画，不用 border —— border 是方的，
+           *   box-shadow 跟着 border-radius 走，才是圆润的环。
+           * ⚠ 不用 --accent-soft：那个变量会被"自定义颜色"重算成深色（实测黑底）。
+           */
+          background: open ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
+          color: open ? 'var(--accent)' : 'var(--ink-soft)',
+          border: '1px solid transparent',
+          boxShadow: open ? '0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent)' : 'none',
+          transition: 'background-color 140ms cubic-bezier(.25,.1,.25,1), box-shadow 140ms, color 140ms',
         }}
       >
         <span aria-hidden style={{ color: 'var(--accent)' }}>{curIcon}</span>
@@ -1304,7 +1562,7 @@ function ThinkPicker({ levels, value, onChange }) {
       {open && pos && (
         <div
           data-testid="think-menu"
-          className="fixed z-[60] py-1.5 rounded-lg"
+          className="fixed z-[60] p-1"
           style={{
             // fixed 的 left/top 参照视口，不受祖先 overflow:hidden 裁剪。
             // ⚠ top 给的是**按钮上沿**，所以要 translateY(-100%) 把菜单
@@ -1312,11 +1570,14 @@ function ThinkPicker({ levels, value, onChange }) {
             left: pos.left,
             top: pos.top,
             transform: 'translateY(-100%)',
-            // 白卡片 + 阴影：弹层必须明显浮在内容之上，
-            // 否则和背景混在一起，用户不知道那是可点的。
-            background: 'var(--paper)',
-            border: '1px solid var(--line)',
-            boxShadow: '0 6px 22px rgba(0,0,0,.16)',
+            /**
+             * 2026-11-02 苹果化：圆角 12、去掉描边、阴影换大扩散。
+             * ⚠ 弹层靠**阴影**浮起来就够了，1px 描边会让它像张表单。
+             * ⚠ 外层留 p-1：每行自己有 7px 圆角，不留边会顶到容器角上。
+             */
+            backgroundColor: 'var(--paper)',
+            borderRadius: 12,
+            boxShadow: '0 10px 30px -8px rgba(0,0,0,.22), 0 2px 6px rgba(0,0,0,.06)',
             minWidth: '176px',
           }}
         >
@@ -1363,45 +1624,29 @@ function MenuRow({ on, icon, label, hint, onClick }) {
       onClick={onClick}
       title={hint || label}
       data-testid={'think-opt-' + label}
-      className="w-full flex items-center gap-2.5 px-3 py-2 text-left"
+      className="w-full flex items-center gap-2.5 px-2.5 py-1.5 text-left"
       style={{
-        // 选中 = 淡蓝底；未选中 = 透明。底色比文字弱一级，
-        // 免得整个菜单看起来是一整块蓝色。
-        background: on ? 'var(--accent-soft)' : 'transparent',
+        /**
+         * 2026-11-02 苹果化：
+         *   左边那个**单选圈去掉**，改成右边一个**勾**。
+         *
+         * ⚠ macOS / iOS 的菜单从来不用 radio 圆点 —— 那是表单控件的样子。
+         *   苹果的选中标记是：整行高亮 + 右侧一个 ✓。
+         * ⚠ 原来那个圈（实心蓝 + 白点）和左边的图标挤在一起，
+         *   一个小方块里塞两个标记，视觉噪音最大。
+         */
+        borderRadius: 7,
+        backgroundColor: on ? 'color-mix(in srgb, var(--accent) 14%, transparent)' : 'transparent',
         color: on ? 'var(--accent)' : 'var(--ink)',
         fontWeight: on ? 600 : 400,
+        transition: 'background-color 120ms cubic-bezier(.25,.1,.25,1)',
       }}
     >
-      {/* 单选圈：选中=实心蓝+白点，未选中=灰圈 */}
-      <span
-        aria-hidden
-        className="rounded-full"
-        style={{
-          width: '13px',
-          height: '13px',
-          border: '1.5px solid ' + (on ? 'var(--accent)' : 'var(--ink-faint, #b9b9c2)'),
-          background: on ? 'var(--accent)' : 'transparent',
-          position: 'relative',
-          flexShrink: 0,
-          display: 'inline-block',
-        }}
-      >
-        {on && (
-          <span style={{
-            position: 'absolute',
-            inset: '0',
-            margin: 'auto',
-            width: '4px',
-            height: '4px',
-            borderRadius: '50%',
-            background: 'var(--accent-ink, #fff)',
-          }} />
-        )}
-      </span>
-      <span aria-hidden style={{ width: '13px', textAlign: 'center', fontSize: '12px', flexShrink: 0 }}>
+      <span aria-hidden style={{ width: '14px', textAlign: 'center', fontSize: '12px', flexShrink: 0 }}>
         {icon}
       </span>
-      <span className="text-[12.5px]">{label}</span>
+      <span className="text-[12.5px] flex-1">{label}</span>
+      {on && <Icon name="check" size={13} />}
     </button>
   );
 }

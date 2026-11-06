@@ -1,3 +1,4 @@
+import { Icon } from './Icons.jsx';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /**
@@ -128,11 +129,12 @@ function Node({
          *   而容器里别的地方也可能有 title（原来 onDrop 就是这么判的，脆）。
          */
         data-tree-row="1"
-        className="flex items-center gap-1 py-[3px] pr-1 group min-w-0"
+        className={'tree-row flex items-center gap-1 py-[4px] pr-1 group min-w-0' + (isActive ? ' is-active' : '')}
         style={{
-          paddingLeft: 6 + depth * 12,
-          background: isActive || isDropDir ? 'var(--accent-soft)' : undefined,
-          borderRadius: 4,
+          // 缩进 16px = 4pt 栅格的 4 倍（苹果的层级缩进就是这个数）
+          paddingLeft: 6 + depth * 16,
+          background: isDropDir ? 'var(--accent-soft)' : undefined,
+          borderRadius: 7,
           boxShadow: shadow,
           opacity: isSource ? 0.4 : 1,
           cursor: isSource ? 'grabbing' : 'pointer',
@@ -176,11 +178,28 @@ function Node({
           ctxMenuAt(e.clientX, e.clientY, node);
         }}
       >
-        {/* 缩进占位箭头 */}
-        <span className="w-3 shrink-0 text-[9px]" style={{ color: 'var(--ink-soft)' }}>
-          {isDir ? (open ? '▼' : '▶') : ''}
+        {/**
+          * 折叠箭头：2026-11-02 从字符 `▶ / ▼` 换成 SVG chevron。
+          *
+          * ⚠ 字符箭头的**基线在字体里**，和中文标签放一起永远对不齐；
+          *   SVG 是几何居中，和 12px 的文件名同一行高度一致。
+          * ⚠ 用 rotate 表达开合（不是换图标），这样有过渡、也不会闪。
+          */}
+        <span className="w-3 shrink-0 flex items-center justify-center" style={{ color: 'var(--ink-soft)' }}>
+          {isDir ? (
+            <Icon
+              name="chevron"
+              size={11}
+              style={{
+                transform: open ? 'rotate(90deg)' : 'none',
+                transition: 'transform 200ms cubic-bezier(.25,.1,.25,1)',
+              }}
+            />
+          ) : null}
         </span>
-        <span className="shrink-0 text-[12px]">{isDir ? '📁' : '📄'}</span>
+        {/* 文件夹/文档图标：**保留原来的 emoji**（羽毛菌：「这里面本来就有图标」）。
+            只把展开箭头换成了 SVG —— ▶▼ 是字体里的字符，基线对不齐中文。 */}
+        <span className="shrink-0 text-[12px] leading-none">{isDir ? '📁' : '📄'}</span>
         <span
           /**
            * 文件名字号：12px（2026-10-15 羽毛菌：「然后目录这种文件名字的字大小再小一号」，
@@ -308,12 +327,42 @@ export default function FileTree({
   activePath,
   /** 排序档位 'manual'|'name'|'modified'|'size' + 切换回调 */
   sortBy = 'manual', onSortChange,
+  /** 欢迎页「规划章纲」要展开的目录，形如 { path: '卷纲', nonce } */
+  focusDir = null,
 }) {
+  /** 版本号（自己查，不从 App 层传 4 层 prop） */
+  const [versionInfo, setVersionInfo] = useState('');
+  useEffect(() => {
+    if (!window.api?.app?.version) return;
+    window.api.app.version()
+      .then((v) => setVersionInfo(v.full || 'v' + v.version))
+      .catch(() => {});
+  }, []);
+
   /**
    * 默认**全部收起**（2026-10-15 羽毛菌：「刚进软件文件夹应该是关着的，而不是打开的」）。
    * ⚠ 原来是 `new Set([''])` —— 空串是**根路径**，所以整棵树默认全展开。
    */
   const [expanded, setExpanded] = useState(() => new Set());
+
+  /**
+   * 欢迎页「规划章纲」：把卷纲文件夹展开（2026-11-05）。
+   *
+   * ⚠ 依赖**整个 focusDir 对象**而不是 focusDir.path：用户手动折起来之后再点一次按钮，
+   *   path 没变、effect 不会重跑，看起来就像按钮失灵。App 那边每次给新 nonce。
+   * ⚠ 只加不删：别把用户已经展开的其它目录顺手收掉。
+   * ⚠ ancestorDirs 是 function 声明（提升），这里的调用顺序不成问题。
+   */
+  useEffect(() => {
+    if (!focusDir || !focusDir.path) return;
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const p of ancestorDirs(focusDir.path + '/x')) next.add(p);
+      next.add(focusDir.path);
+      return next;
+    });
+  }, [focusDir]);
+
   const [keyword, setKeyword] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [menu, setMenu] = useState(null);           // {x, y, node}
@@ -747,13 +796,12 @@ export default function FileTree({
 
       {/* ============ 第 2 行：当前项目（点击切换） ============ */}
       <div
-        className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 border-y"
-        style={{ borderColor: 'var(--line)' }}
+        className="shrink-0 flex items-center gap-1.5 px-2.5 py-1.5"
       >
         <button
           onClick={onSwitchProject}
           className="flex items-center gap-1.5 flex-1 min-w-0 px-2 py-1 rounded text-left"
-          style={{ background: 'var(--paper)', border: '1px solid var(--line)' }}
+          style={{ background: 'var(--paper-2)' }}
           title="点击切换小说项目（新建 / 改名 / 删除 / 导出 / 回收站）"
         >
           <span className="text-[12px] shrink-0">📕</span>
@@ -832,14 +880,24 @@ export default function FileTree({
         )}
       </div>
 
-      {/* 文件数（原来这里还有个「＋ 新建」按钮，2026-10-16 去掉） */}
-      <div
-        className="shrink-0 px-2.5 py-1 border-t flex items-center gap-2"
-        style={{ borderColor: 'var(--line)' }}
-      >
+      {/* 文件数（原来这里还有个「＋ 新建」按钮，2026-10-16 去掉）
+          ⚠ 2026-11-02：版本号从"左栏设置按钮旁边"挪到这里（羽毛菌圈的位置）。
+             🎯 放这里的理由：这行是"文件统计"，本来就只读、不打扰，
+                版本号同性质 —— 都属于"想查的时候能找到，不想看的时候忽略"。
+          ⚠ 去掉顶部分隔线：卡片化之后，卡片内部的线是多余的。 */}
+      <div className="shrink-0 px-2.5 py-1 flex items-center gap-2">
         <span className="text-[10.5px]" style={{ color: 'var(--ink-soft)' }}>
           {fileCount} 个文件
         </span>
+        {versionInfo && (
+          <span
+            className="text-[10px] ml-auto tabular-nums"
+            style={{ color: 'var(--ink-soft)', opacity: 0.55 }}
+            title="当前版本"
+          >
+            {versionInfo}
+          </span>
+        )}
         {/**
          * ⚠ 那个「＋ 新建」按钮是 2026-10-16 羽毛菌点名去掉的：
          *   「新建文件只会添加在章节文件夹下面，所以底下那个新建按钮取消掉，没有用」。

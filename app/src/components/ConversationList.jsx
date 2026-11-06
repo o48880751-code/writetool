@@ -109,7 +109,7 @@ export default function ConversationList({
        *   `if (!projectId) return` 会静默什么都不做），`data-testid` 也留着 ——
        *   `test-first-run` 靠它找入口。
        */}
-      <div className="shrink-0" style={{ borderBottom: '1px solid var(--line)' }}>
+      <div className="shrink-0">
         {/**
          * ⚠⚠ 高度**写死** h-8（2026-10-16 20:04 羽毛菌：「对话列表那几个字上下两边都有分隔线，
          * 快捷工具那一栏上下两边也有分隔线，他们上边那一条是连着的同一个水平，
@@ -207,8 +207,7 @@ export default function ConversationList({
           return (
             <div
               key={c.id}
-              className="group relative px-2 py-1.5 mx-1 rounded"
-              style={{ background: active ? 'var(--accent-soft)' : 'transparent' }}
+              className={'conv-item group relative px-2.5 py-2 mx-1' + (active ? ' is-active' : '')}
             >
               {editingId === c.id ? (
                 <input
@@ -229,10 +228,11 @@ export default function ConversationList({
                   className="w-full text-left"
                 >
                   <div className="text-[12.5px] truncate pr-12"
-                       style={{ color: 'var(--ink)', fontWeight: active ? 600 : 400 }}>
+                       style={{ color: active ? 'var(--accent-ink)' : 'var(--ink)', fontWeight: active ? 600 : 400 }}>
                     {c.title}
                   </div>
-                  <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--ink-soft)' }}>
+                  <div className="text-[10.5px] mt-0.5"
+                       style={{ color: active ? 'color-mix(in srgb, var(--accent-ink) 68%, transparent)' : 'var(--ink-soft)' }}>
                     {relTime(c.updated_at)}
                   </div>
                 </button>
@@ -275,24 +275,24 @@ export default function ConversationList({
             {statusLine.text}
           </div>
         )}
+        {/**
+          * 设置入口（2026-11-02）：从"全宽文字按钮"改成**小方块图标**。
+          * 羽毛菌：「⚙ 设置改成齿轮也可以」—— 意思是只留齿轮。
+          * ⚠ 苹果的侧栏底部从来不放一条带文字的横条，就是个图标。
+          * ⚠ 去掉描边：`--paper-2` 自己的底色已经能表达"这是个可点的块"。
+          */}
         <button
           onClick={onOpenSettings}
           data-testid="btn-settings"
-          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+          className="w-8 h-8 flex items-center justify-center rounded-lg"
           style={{
-            background: 'var(--paper-2)',
-            border: '1px solid var(--line)',
-            color: 'var(--ink)',
+            backgroundColor: 'var(--paper-2)',
+            color: 'var(--ink-soft)',
+            transition: 'background-color 140ms cubic-bezier(.25,.1,.25,1)',
           }}
-          title="打开设置（AI 提供商、思考强度、主题、数据）"
+          title="设置（AI 提供商、思考强度、主题、数据）"
         >
-          {/* 图标 15px 与文字 12.5px 配比协调；比正文大一号，
-              这样它才像"入口"而不是"一行说明文字" */}
-          <span className="text-[15px] leading-none shrink-0">⚙</span>
-          <span className="text-[12.5px] flex-1 text-left">设置</span>
-          {versionInfo && (
-            <span className="text-[10px] opacity-50 tabular-nums shrink-0">{versionInfo}</span>
-          )}
+          <span className="text-[14px] leading-none">⚙</span>
         </button>
       </div>
     </aside>
@@ -304,8 +304,8 @@ function IconBtn({ children, title, onClick }) {
     <button
       onClick={onClick}
       title={title}
-      className="w-5 h-5 rounded text-[11px] leading-none"
-      style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)' }}
+      className="conv-icon-btn w-5 h-5 rounded text-[11px] leading-none"
+      style={{ color: 'var(--ink-soft)' }}
     >
       {children}
     </button>

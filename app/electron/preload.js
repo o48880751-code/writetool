@@ -30,6 +30,47 @@ contextBridge.exposeInMainWorld('api', {
     set: (patch) => call('config:set', patch),
   },
 
+  /**
+   * ---- 封面生图----
+   *
+   * ⚠⚠ 参数一律 **整串透传** `(p) => call(ch, { ...p })`，不在这里挑字段。
+   *   这一层已经因为"主进程加了字段、preload 没跟着加"栽过四次
+   *   （kind / list / stat / import）。生图这边字段更多（providerKey / base /
+   *   model / size / prompt），挑字段写就是等着再栽一次。
+   *
+   * ⚠ 密钥不走 config，走 safeStorage 的 `image` 服务名；
+   *   `image:get` 只回 `hasKey` 布尔，**密文和明文都不过 IPC**。
+   */
+  image: {
+    /** 内置的服务商预付表（百炼 / 方舟 / 商汤 / 千帆 / 自定义） */
+    presets: () => call('image:presets'),
+    /** 当前配置 + 实际生效值 + 有没有存过密钥 */
+    get: () => call('image:get'),
+    /** 改配置。换服务商会把 base/model/size 清回那家的默认 */
+    save: (p) => call('image:save', { ...(p || {}) }),
+    /** 存密钥（进 safeStorage），只回 hasKey */
+    setKey: (p) => call('image:setKey', { ...(p || {}) }),
+    /** 真的画一张来验证配置（返回 appbg:// 地址，耗时可能几十秒） */
+    tryOne: (p) => call('image:try', { ...(p || {}) }),
+    /** 画风 + 题材清单 */
+    styles: () => call('image:styles'),
+    /**
+     * 让文字模型把五要素写成画面描述。
+     * ⚠ 失败**不抛**：回 `{source:'template'}` 并带一句 `note` ——
+     *   这条链路必须永远有输出，否则"生成封面"会变成点不动的按钮。
+     */
+    composePrompt: (p) => call('image:composePrompt', { ...(p || {}) }),
+    /**
+     * 给某本书生成封面。产物落在项目的 `_assets/` 里，
+     * 回的是**相对路径** + 可直接用的 `wtfile://` 地址。
+     */
+    cover: (p) => call('image:cover', { ...(p || {}) }),
+    /** 项目内图片 → data URL（Canvas 叠字要它，跨协议的图会污染画布） */
+    readAsDataUrl: (p) => call('image:readAsDataUrl', { ...(p || {}) }),
+    /** 存叠好字的封面 PNG */
+    saveCover: (p) => call('image:saveCover', { ...(p || {}) }),
+  },
+
   // ---- 工具（终端 / 联网）----
   //
   // ⚠ 这一组是「模型能碰到你电脑」的入口，所以分两类：
@@ -38,6 +79,20 @@ contextBridge.exposeInMainWorld('api', {
   tool: {
     /** 回传审批结果。allow=false 拒绝。 */
     decide: ({ id, allow }) => call('tool:decide', { id, allow }),
+    /**
+     * 快捷工具的 AI 动作（起名 / 脑洞 / 灵感碎片，2026-11-03）。
+     *
+     * ⚠⚠ 必须写在**这个对象里**，不能另起一个 `tool: { gen }` ——
+     *   同一个 key 在对象字面量里出现两次，**后者静默覆盖前者**，
+     *   于是 onStart/onEnd/decide 全部消失，App 启动即白屏
+     *   （报 `window.api.tool.onStart is not a function`）。
+     *   实测就是踩了这个：判据打开一看整页是"渲染失败：TypeError"。
+     *
+     * ⚠ 参数整串透传：这一层栽过四次（kind / list / stat / import 被丢字段），
+     *   而 `fields` 是对象套对象，最容易被"我记得有这几个字段"写漏。
+     *   白名单在主进程做（见 tool-prompts.js 的 FIELDS）。
+     */
+    gen: (p) => call('tool:gen', { ...(p || {}) }),
     /** 危险命令请求放行。返回取消订阅函数 */
     onApprove: (fn) => {
       const h = (_e, payload) => fn(payload);
@@ -75,12 +130,27 @@ contextBridge.exposeInMainWorld('api', {
   // ---- 项目 ----
   project: {
     list: () => call('project:list'),
-    create: ({ id, name }) => call('project:create', { id, name }),
+    stat: ({ id }) => call('project:stat', { id }),
+    draft: (p) => call('project:draft', { ...p }),
+    /**
+     * ⚠⚠ 参数必须**整串透传**，不要在这里挑字段（2026-11-01 修）。
+     *
+     * 原来写的是 `({ id, name }) => call('project:create', { id, name })` ——
+     * 我加了 `kind`（决定建哪套骨架），但这里没跟着加，
+     * 结果 kind 在 preload 这一层就被丢掉了，主进程收到 undefined，
+     * 判成"非法类型"退回长篇。用户选了「短剧」建出来还是长篇骨架。
+     *
+     * ⚠ 这类"只在某一层漏一个字段"的 bug，主进程和界面各自单测都测不出来，
+     *   只有真的点一遍才会暴露。所以**新增字段时先 grep preload**。
+     */
+    create: (p) => call('project:create', { ...p }),
     open: ({ id }) => call('project:open', { id }),
     /** 改显示名（不动文件夹） */
     rename: ({ id, name }) => call('project:rename', { id, name }),
     /** 删项目。keepFiles=true 时保留磁盘上的文件夹 */
     delete: ({ id, keepFiles }) => call('project:delete', { id, keepFiles }),
+    /** 设/清书架封面。coverPath 是**项目内相对路径**，空串表示去掉 */
+    setCover: (p) => call('project:setCover', { ...(p || {}) }),
     /**
      * 导入一个已有的小说文件夹（原地指过去，不复制）。
      * 不传 dir 会弹系统选择框；传了则直接用该目录（测试/脚本用）。
@@ -185,6 +255,16 @@ contextBridge.exposeInMainWorld('api', {
     /** 导出成可带走的结构 */
     export: ({ id }) => call('skill:export', { id }),
 
+    /**
+     * 技能广场（2026-10-28）。
+     *
+     * ⚠ 不预装、不打包进安装包：技能正文会进模型上下文，
+     *   预装十几个等于每个用户每次对话都多背几千字。
+     *   放在发布站，用到再拉。
+     */
+    marketList: () => call('skill:marketList'),
+    marketInstall: ({ id, projectId }) => call('skill:marketInstall', { id, projectId }),
+
     /** 渐进式加载的第一级：只给 name + description */
     index: ({ projectId, only }) => call('skill:index', { projectId, only }),
     /** 第二级：@ 引用时取完整正文 */
@@ -192,6 +272,36 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // ---- 生成 ----
+  /**
+   * 选项目外的文本文件（拆书用）。
+   * ⚠ 只读不写，返回 { ok, path, name, bytes, chars, text }
+   */
+  dialog: {
+    pickTextFile: () => call('dialog:pickTextFile'),
+  },
+
+  /**
+   * 拆书（2026-10-28）。
+   *
+   * ⚠ 独立于对话：拆书产出几万字，进对话历史会拖累后面每一轮。
+   *   这里一次性拿结果，然后 `save` 落成文件，需要时用 @ 引用。
+   */
+  analyze: {
+    run: ({ prompt }) => call('analyze:run', { prompt }),
+    save: ({ name, markdown, projectId }) => call('analyze:save', { name, markdown, projectId }),
+  },
+
+  /**
+   * 版本检查（2026-10-29）。
+   * ⚠ 只提示不自动更新：安装包没签名，自动更新的 exe 会被 SmartScreen 拦。
+   * ⚠ 打开外链用现成的 `app.openExternal`（preload 475 行那个），
+   *   这里**不要再注册一份** —— 2026-10-29 重复注册 `app:openExternal`
+   *   导致主进程启动就抛 "Attempted to register a second handler"。
+   */
+  update: {
+    check: () => call('update:check'),
+  },
+
   generate: {
     start: (p) => call('generate:start', p),
     stop: () => call('generate:stop'),
@@ -483,6 +593,11 @@ contextBridge.exposeInMainWorld('api', {
     install: ({ id }) => call('font:install', { id }),
     /** 删除某个已下载字体 */
     uninstall: ({ id }) => call('font:uninstall', { id }),
+    /**
+     * 从本地文件装字体（不依赖网络）。
+     * ⚠ 整串透传：不传 filePath 时主进程会弹系统选择框。
+     */
+    importLocal: (p) => call('font:import', { ...(p || {}) }),
     /** 订阅下载进度；返回取消订阅函数 */
     onProgress: (fn) => {
       const h = (_e, p) => fn(p);

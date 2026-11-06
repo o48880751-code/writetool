@@ -64,22 +64,44 @@ function storageKey(appVersion) {
  * 现在的规矩：**Divider 的宽度从这个常量取**（`width: DIVIDER_W`），
  * 谁也别再写死一个数 —— 两处各写一个数就一定会再次错开。
  */
-const DIVIDER_W = 1;
+/**
+ * 分隔条的**视觉宽度**，也决定了四栏之间那条缝有多宽。
+ *
+ * ⚠ 2026-11-03：10 → 6。羽毛菌：「留空太多了，我都没办法往里推，
+ *   挤压了别的卡片的区域」。三处缝各 10px，加上两侧 padding，
+ *   四栏一共被吃掉 30 多 px —— 窗口只有 1384 时这很致命。
+ *
+ *   6px 是下限：再小圆角 14 的卡片会挤在一起看不清是两张卡，
+ *   而且没有余量给分隔条本身。
+ */
+const DIVIDER_W = 6;
 
 /**
- * 分隔条的**命中区**宽度（视觉 1px，但手指要能点中）——与布局无关，别混进上面那个常量。
- *
- * ⚠⚠ 12 → 6（2026-10-16 羽毛菌：「这个分割线为什么还能左右拖动」）。
- *   现场量到的：命中区 12px，从分隔线往**两侧面板内部各伸 6px** ——
- *   而分隔线本来就贴在面板边界上，于是聊天区最右边 6px 全是"拖拽区"，
- *   正好压在输入框的右边缘上。用户在那里随手一拖栏宽就变了，
- *   看起来就是"输入框旁边那条东西居然能拖着左右拉"。
- *
- *   改成 6px（左右各 2.5px）：仍然好点中，但不再覆盖面板里的内容。
- *   ⚠ 命中区越大误触越多，这是同一根绳上的两头 —— 真要方便还可以再加
- *     "按住 Alt 拖"或"双击复位"，别靠无限加大命中区来解决。
+ * 卡片四周的留边。
+ * ⚠ 这个值**必须**一起算进宽度账里（见 divTotal）——
+ *   容器加了 padding 而分配宽度时没扣，四栏总宽会超出 12px，
+ *   最后一栏被挤出可视区。
  */
-const DIVIDER_HIT = 6;
+const PANE_PAD = 8;
+
+/**
+ * 分隔条的**命中区**宽度（视觉 6px，但手指要能点中）——与布局无关，别混进上面那个常量。
+ *
+ * ⚠⚠ 这里有过两次反向调整，两次都是真问题，别只看其中一条注释就改：
+ *
+ *   · 12 → 6（2026-10-16）：「这个分割线为什么还能左右拖动」——
+ *     命中区从分隔线往**两侧面板内部各伸 6px**，正好压在输入框右边缘上，
+ *     用户随手一拖栏宽就变了。
+ *   · 6 → 12（2026-11-03）：「我都没办法往里推」——
+ *     6 比视觉条（当时 10px）还窄，实际可点区域只有 6px 中间那一小段，
+ *     几次点不中之后，用户就认定"这栏拖不动"。
+ *
+ * 定成 **12**：比视觉条 6px 宽，两侧各外扩 3px ——
+ *   够好点中，又不至于像 12 那次那样伸进内容 6px。
+ * ⚠ `inset` 的公式已经在下面按 `(HIT - W) / 2` 算，HIT > W 时自动外扩，
+ *   HIT < W 时反而内缩（那两版都吃过这个亏）。
+ */
+const DIVIDER_HIT = 12;
 
 /**
  * 各栏默认比例与绝对宽度约束。
@@ -131,7 +153,7 @@ export function saveWidths(widths, key) {
 /** 按权重分配容器宽度。min 之和超过容器时返回 min（此时会横向滚动，用户可拖回来）
  *  @param {Array} specs 只传**可见**的栏（收起的栏不参与分配） */
 export function initWidths(container, specs = PANE_DEFAULTS) {
-  const divTotal = DIVIDER_W * Math.max(0, specs.length - 1);
+  const divTotal = DIVIDER_W * Math.max(0, specs.length - 1) + PANE_PAD * 2;
   const usable = Math.max(0, container - divTotal);
   const sumMin = specs.reduce((s, p) => s + p.min, 0);
   if (usable < sumMin) {
@@ -183,9 +205,22 @@ function fallbackWidths() {
  */
 export function allocate(widths, container, specs = PANE_DEFAULTS) {
   if (container <= 0 || !specs.length) return widths;
-  const divTotal = DIVIDER_W * (specs.length - 1);
+  const divTotal = DIVIDER_W * (specs.length - 1) + PANE_PAD * 2;
   const usable = Math.max(0, container - divTotal);
   const out = { ...widths };
+  /**
+   * ⚠ 先逐栏 clamp 到 [min, max]（2026-10-30 加）。
+   *
+   * localStorage 里可能存着历史版本写进去的越界值（拖动时提交的是
+   * `flexBasis` 的设置值，而实际渲染被 min/max 顶住，两者不一致）。
+   * 不先修一遍，下面按"总和"算出来的位置就与实际渲染对不上，
+   * 表现为拖完分隔条后几栏互相压住。
+   */
+  for (const p of specs) {
+    if (typeof out[p.key] === 'number') {
+      out[p.key] = Math.min(Math.max(out[p.key], p.min), p.max);
+    }
+  }
   const total = specs.reduce((s, p) => s + (out[p.key] || 0), 0);
 
   // 装不下：按权重从余量最大的栏开始收
@@ -278,12 +313,26 @@ function Divider({ left, right, widths, containerRef, onCommit, onDoubleClick })
       window.removeEventListener('pointerup', onUp);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      // 从 DOM 读回真实值落 state：拖动过程没有中间 state，只能这样取
+      /**
+       * ⚠⚠ 读**真实渲染宽度**，不能读 `style.flexBasis`（2026-10-30 修）。
+       *
+       * 拖动时只改了 `flexBasis`，而 section 上还有 `minWidth: spec.min`
+       * 和 `maxWidth: spec.max`。把某栏拖到 min 以下时：
+       *   `flexBasis` 写的是 200，实际渲染被 min 顶在 260。
+       * 这里若按 200 提交，state 里就存了一个**低于 min 的非法宽度**，
+       * 而 `allocate()` 只保证总和 ≤ 容器、不保证每栏 ≥ min。
+       * 结果是"计算宽度"与"渲染宽度"不一致 —— 后面的栏按算出来的位置排，
+       * 实际画出来的更宽，**看起来就是右边那一栏盖住了左边**。
+       *
+       * `getBoundingClientRect()` 拿的是布局后的真实像素，和用户看到的一致。
+       */
       const el = containerRef.current?.querySelector(`[data-pane="${left.key}"]`);
-      if (el) {
-        const realW = parseFloat(el.style.flexBasis) || startLeft;
-        onCommit({ [left.key]: realW, [right.key]: pairTotal - realW });
-      }
+      const realW = el ? el.getBoundingClientRect().width : startLeft;
+      const clamped = Math.min(Math.max(realW, left.min), left.max);
+      onCommit({
+        [left.key]: Math.round(clamped),
+        [right.key]: Math.round(Math.min(Math.max(pairTotal - clamped, right.min), right.max)),
+      });
     };
 
     document.body.style.cursor = 'col-resize';
@@ -314,7 +363,18 @@ function Divider({ left, right, widths, containerRef, onCommit, onDoubleClick })
         width: DIVIDER_W,
         flex: `0 0 ${DIVIDER_W}px`,
         cursor: 'col-resize',
-        background: hover ? 'var(--accent)' : 'var(--line)',
+        /**
+         * ⚠ 默认**透明**（2026-11-01 去分割线）。
+         *
+         * 原来是一条 `var(--line)` 的 1px 实线。三栏加起来四条线，
+         * 是"工业感"最主要的来源 —— 苹果和 ChatGPT 都不用线分栏，
+         * 靠**背景明度差**分。线撤掉之后，`section` 那边给侧栏换了
+         * `--paper-2`，视觉上仍然分得开。
+         *
+         * ⚠ 拖拽的时候仍然要看得见（hover → 强调色），否则用户不知道
+         *   自己正在拖哪条缝。
+         */
+        background: hover ? 'var(--accent)' : 'transparent',
         transition: 'background .12s',
         position: 'relative',
         zIndex: 5,
@@ -346,7 +406,7 @@ function Divider({ left, right, widths, containerRef, onCommit, onDoubleClick })
  *   收起的栏不渲染、不占宽度，它腾出的空间按比例分给剩下的栏；
  *   放回来时拿回自己原来调好的宽度（见 allocate 的注释）。
  */
-export default function SplitPanes({ panes, height = '100%', children, appVersion, hidden = [] }) {
+export default function SplitPanes({ panes, height = '100%', children, appVersion, hidden = [], closing = [] }) {
   const containerRef = useRef(null);
   // 版本号是异步拿到的，所以 key 要跟着它变。
   // 版本变化时 React 会重建 state —— 那正是我们要的「布局重置」。
@@ -394,6 +454,18 @@ export default function SplitPanes({ panes, height = '100%', children, appVersio
     setWidths((prev) => {
       const base = prev || fallbackWidths();
       const next = { ...base, ...patch };
+      /**
+       * ⚠ 落盘前逐栏 clamp 一遍（2026-10-30 加）。
+       *
+       * 拖拽提交的值可能越过 min/max（拖动过程有 clamp，但
+       * `minWidth` / `maxWidth` 会把实际渲染顶回边界，提交值仍是超出边界的那个）。
+       * 存进去之后，`allocate()` 也不会把它修回来 —— 它只管总和，不管单栏下限。
+       * 于是每拖一次就积累一点误差，最后几栏的位置算不准，看起来互相压住。
+       */
+      for (const p of PANE_DEFAULTS) {
+        if (typeof next[p.key] !== 'number') continue;
+        next[p.key] = Math.round(Math.min(Math.max(next[p.key], p.min), p.max));
+      }
       saveWidths(next, key);
       return next;
     });
@@ -432,7 +504,15 @@ export default function SplitPanes({ panes, height = '100%', children, appVersio
         width: '100%',
         minHeight: 0,
         overflow: 'hidden',
-        background: 'var(--paper)',
+        /**
+         * 2026-11-02 卡片化（照苹果风原型）：
+         *   外层降到 --paper-2，每栏是一张 --paper 的圆角卡片，
+         *   8px 的缝（DIVIDER_W）里露出来的就是这层底。
+         * ⚠ 原来这里是 --paper，和卡片同色 —— 加了间隙也是"白缝白"，
+         *   分层根本看不出来。间隙和底色降档必须一起改。
+         */
+        background: 'var(--paper-2)',
+        padding: PANE_PAD + 'px',
       }}
       onDoubleClick={(e) => {
         // 只在点到空白处时重置，避免与子面板的 dblclick（选中文本）打架
@@ -444,8 +524,12 @@ export default function SplitPanes({ panes, height = '100%', children, appVersio
         const width = w[spec.key];
         return (
           <div key={spec.key} style={{ display: 'contents' }}>
+            {/* 正在收起：CSS 会把宽度收到 0 并淡出（见 index.css），200ms 后才真的移除。
+                ⚠ 标签属性之间**不能**放裸的行内注释 —— 那是语法禁区，构建会直接报
+                "Expected , or )"。要写就写成现在这样，作为子节点用花括号包起来。 */}
             <section
               data-pane={spec.key}
+              data-pane-closing={closing.includes(spec.key) ? '1' : undefined}
               aria-label={spec.label}
               style={{
                 flex: `0 0 ${Math.round(width)}px`,
@@ -456,7 +540,22 @@ export default function SplitPanes({ panes, height = '100%', children, appVersio
                 display: 'flex',
                 flexDirection: 'column',
                 overflow: 'hidden',
+                /**
+                 * 侧栏（对话列表 / 文件树）比对话区**低一档明度**（2026-11-01）。
+                 *
+                 * ⚠ 这条和"去掉分割线"是配套的：线撤了之后如果三栏还同色，
+                 *   界面会糊成一片。ChatGPT / 苹果都是这么分层的 ——
+                 *   侧栏 `#f9f9f9`、内容区 `#fff`，没有一条描边。
+                 */
+                /**
+                 * 2026-11-02 卡片化（照原型）：
+                 *   每一栏是一张**圆角 14 的卡片**，浮在 --paper-2 的外层上，
+                 *   栏与栏之间 8px 的缝就是"桌面"露出来的部分。
+                 * ⚠ 四栏**统一纸色**。之前侧栏降一档是为了在没有间隙时靠
+                 *   明度差分栏；现在有缝有圆角了，再降一档只会显得脏。
+                 */
                 background: 'var(--paper)',
+                borderRadius: 14,
               }}
             >
               {e.pane.render()}

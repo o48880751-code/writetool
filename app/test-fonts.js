@@ -2,7 +2,7 @@
 /**
  * 字体预置表校验（不依赖 Electron，纯 node 跑）。
  *
- * 1. 4 个开源字体都在、字段齐全（id/label/family/file/url/sizeMB/desc）
+ * 1. 3 个开源字体都在、字段齐全（id/label/family/file/url/sizeMB/desc）
  * 2. 每个 url 真实可达（HEAD 200）—— 抓「手滑写错版本号 / 路径」这种低级但致命的错
  * 3. family 含空格的都带了引号（否则 @font-face 会解析失败）
  * 4. @font-face 注入串拼装正确（与渲染层 injectFontFaces 同构）
@@ -26,7 +26,7 @@ const head = (url) => new Promise((resolve) => {
 });
 
 console.log('字体预置校验');
-check('恰好 4 个开源字体', () => assert.strictEqual(FONTS.length, 4));
+check('恰好 3 个开源字体（霞鹜文楷已移除，见 font-presets 注释）', () => assert.strictEqual(FONTS.length, 3));
 check('字段齐全', () => {
   for (const f of FONTS) {
     for (const k of ['id', 'label', 'family', 'file', 'url', 'sizeMB', 'desc']) {
@@ -49,7 +49,9 @@ check('url 带版本锁（不是 @latest）', () => {
   for (const f of FONTS) assert.ok(!/@latest/.test(f.url), `${f.id} 用了 @latest`);
 });
 check('fontById 能查到', () => {
-  assert.ok(fontById('lgwk'));
+  assert.ok(fontById('lgwk-gb'));
+  // ⚠ 已下架的 id 必须查不到，否则界面上会冒出一个没有下载按钮的幽灵行
+  assert.strictEqual(fontById('lgwk'), null);
   assert.strictEqual(fontById('nope'), null);
 });
 
@@ -61,12 +63,12 @@ check('fontById 能查到', () => {
   }
 
   // @font-face 拼装（与 src/lib/fonts.js injectFontFaces 同构）
-  const css = FONTS.filter((f) => f.id === 'lgwk')
+  const css = FONTS.filter((f) => f.id === 'lgwk-gb')
     .map((p) => `@font-face{font-family:${p.family};src:url('appfont://${p.file}');font-display:swap;}`)
     .join('\n');
   check('@font-face 拼装正确', () => {
-    assert.ok(css.includes("@font-face{font-family:'LXGW WenKai'"));
-    assert.ok(css.includes("url('appfont://LXGW-WenKai.ttf')"));
+    assert.ok(css.includes("@font-face{font-family:'LXGW WenKai GB'"));
+    assert.ok(css.includes("url('appfont://LXGW-WenKai-GB.ttf')"));
   });
 
   console.log(`\n通过 ${pass} 项${process.exitCode ? '（有失败）' : '，全部 PASS'}`);

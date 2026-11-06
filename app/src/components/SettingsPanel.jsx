@@ -117,11 +117,11 @@ export default function SettingsPanel({ config, onConfigChange, ollama, projectI
             {['light', 'dark'].map((t) => (
               <button
                 key={t}
-                onClick={() => save({ theme: t })}
+                onClick={() => save({ mode: t })}
                 className="flex-1 py-1.5 rounded text-[12px]"
                 style={{
-                  background: local.theme === t ? 'var(--accent)' : 'var(--accent-soft)',
-                  color: local.theme === t ? '#fff' : 'var(--ink)',
+                  background: local.mode === t ? 'var(--accent)' : 'var(--accent-soft)',
+                  color: local.mode === t ? 'var(--accent-ink)' : 'var(--ink)',
                 }}
               >
                 {t === 'light' ? '浅色' : '深色'}

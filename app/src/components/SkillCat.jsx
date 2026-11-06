@@ -36,7 +36,7 @@ import { H1, Group, Hint } from './settings-ui.jsx';
  * 缺 description 的技能装了等于没装——用户会以为"装了但没生效"。
  * 所以导入时必须提示，不能默默装上。
  */
-function SkillCat({ projectId, onToast }) {
+function SkillCat({ projectId, onToast, onDataChanged }) {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
@@ -51,6 +51,22 @@ function SkillCat({ projectId, onToast }) {
   // 自动路由开关（2026-10-16）
   const [autoSkill, setAutoSkill] = useState(false);
   const [configReady, setConfigReady] = useState(false);
+
+  /**
+   * 技能广场（2026-10-28）。
+   *
+   * ⚠ 为什么是"下载"而不是"预装"：
+   *   技能正文会进模型上下文。预装十几个，等于每个用户每次对话
+   *   都多背几千字——而其中九成跟这次对话无关。
+   *
+   * ⚠ 为什么不用数据库存"下载数"：
+   *   技能包是不变的内容文件，索引就是一个静态 JSON。
+   *   加数据库只换来一个统计数字，却多一样要备份、要防注入的东西。
+   */
+  const [marketOpen, setMarketOpen] = useState(false);
+  const [marketSkills, setMarketSkills] = useState([]);
+  const [marketErr, setMarketErr] = useState('');
+  const [marketBusy, setMarketBusy] = useState('');
 
   /**
    * 读自动路由开关。
@@ -116,7 +132,18 @@ function SkillCat({ projectId, onToast }) {
     setBusyId(sk.id);
     try {
       await window.api.skill.setEnabled({ id: sk.id, enabled: !sk.enabled });
-      await load();
+      /**
+       * ⚠⚠ 只改这一条的 state，**不要调 load()**（2026-10-31 修）。
+       *
+       * 现场：用户在列表里勾一个技能，页面**立刻跳回顶部**。
+       * 原因：`load()` 会把 `loading` 置 true → 列表整块卸载重建成"加载中"，
+       * 等数据回来再重建一次。DOM 一卸载，滚动位置就没了。
+       * 而 `load()` 还要逐条取配套文件（十几个 Ipc），本来也没必要为一次开关重跑。
+       *
+       * ⚠ 开关只影响 `enabled` 一个字段，本地改就够了。
+       *   顶部的「已开启 N / 共 M」是从 list 算出来的，会自己跟着变。
+       */
+      setList((prev) => prev.map((x) => (x.id === sk.id ? { ...x, enabled: !sk.enabled } : x)));
     } catch (e) {
       onToast?.(`操作失败：${e.message}`);
     } finally {
@@ -232,6 +259,51 @@ function SkillCat({ projectId, onToast }) {
       setViewFile({ ...f });
     } catch (e) {
       onToast?.(`读取失败：${e.message}`);
+    }
+  };
+
+  // ---------------- 技能广场 ----------------
+
+  /** 打开广场并拉索引。⚠ 失败也要打开弹窗 —— 要能看到"没连上"，而不是点了没反应 */
+  const openMarket = async () => {
+    setMarketOpen(true);
+    setMarketErr('');
+    setMarketSkills([]);
+    try {
+      const r = await window.api.skill.marketList();
+      if (r && r.ok) setMarketSkills(r.skills || []);
+      else setMarketErr((r && r.error) || '拉取失败');
+    } catch (e) {
+      setMarketErr(e?.message || '拉取失败');
+    }
+  };
+
+  /**
+   * 装一个技能。
+   * ⚠ 装完必须重拉本地列表：广场数组和 list 是两份数据，
+   *   只改前者的话，用户关掉弹窗会看到"装了但列表里没有"。
+   */
+  const installFromMarket = async (sk) => {
+    if (marketBusy) return;
+    setMarketBusy(sk.id);
+    try {
+      await window.api.skill.marketInstall({ id: sk.id, projectId });
+      onToast?.(`已装上「${sk.name}」`);
+      setMarketSkills((prev) => prev.map((x) => (x.id === sk.id ? { ...x, installed: true } : x)));
+      await load();
+      /**
+       * ⚠⚠ 必须叫 App 也重拉一次（2026-10-29 修）。
+       *
+       * `load()` 刷的是**这个页面的列表**；而对话里的 @ 技能面板用的是
+       * `App` 的 `skills` 状态，它只在切项目 / bump 时才重拉。
+       * 少了这一句，用户装完回到对话**艾特不到新技能**，必须重启软件 ——
+       * 他会以为「下载了但没装上」，实际上东西已经在库里了。
+       */
+      onDataChanged?.();
+    } catch (e) {
+      onToast?.(`装失败：${e?.message || '未知错误'}`);
+    } finally {
+      setMarketBusy('');
     }
   };
 
@@ -526,6 +598,18 @@ function SkillCat({ projectId, onToast }) {
         >
           ＋ 新建
         </button>
+        {/* ⚠ 广场（2026-10-28）：上面那段注释里说的「广场暂缓」已经作废。
+            服务器有了，而且**不预装**——技能正文会进上下文，
+            预装十几个等于每次对话多背几千字。按需下载才对。 */}
+        <button
+          onClick={openMarket}
+          data-testid="skill-market"
+          className="px-2.5 py-1.5 rounded text-[12px] shrink-0"
+          style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)' }}
+          title="从发布站下载技能，不预装"
+        >
+          广场
+        </button>
       </div>
 
       {/* ⚠⚠ 原「导入区」已删除（2026-10-16，理由见上面那两个按钮的注释）。
@@ -590,6 +674,110 @@ function SkillCat({ projectId, onToast }) {
             >
               {viewFile.content}
             </pre>
+          </div>
+        </div>
+      )}
+
+      {/* ---- 技能广场（2026-10-28） ---- */}
+      {marketOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,.45)' }}
+          onClick={() => setMarketOpen(false)}
+        >
+          <div
+            className="rounded-xl overflow-hidden flex flex-col"
+            style={{
+              width: 620, maxWidth: '92vw', maxHeight: '80vh',
+              background: 'var(--paper)', border: '1px solid var(--line)',
+              boxShadow: '0 12px 40px -8px rgba(0,0,0,.35)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="flex items-center justify-between px-4 h-11 shrink-0"
+              style={{ borderBottom: '1px solid var(--line)' }}
+            >
+              <div className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
+                技能广场
+                <span className="ml-2 text-[11px] font-normal" style={{ color: 'var(--ink-soft)' }}>
+                  用到的才装，装了才进上下文
+                </span>
+              </div>
+              <button
+                onClick={() => setMarketOpen(false)}
+                className="text-[16px] leading-none px-1"
+                style={{ color: 'var(--ink-soft)' }}
+                title="关闭"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-3 flex-1">
+              {marketErr && (
+                <div
+                  className="text-[12px] rounded p-3 mb-2"
+                  style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)' }}
+                >
+                  没连上广场：{marketErr}
+                  <div className="mt-1 text-[11px]">检查网络后重新打开这个窗口</div>
+                </div>
+              )}
+
+              {!marketErr && !marketSkills.length && (
+                <div className="text-[12px] text-center py-10" style={{ color: 'var(--ink-soft)' }}>
+                  暂时没有可下载的技能
+                  <div className="mt-2 text-[11px]">
+                    这个窗口是留给第三方技能的。软件自带的能力（去 AI 味、润色、拆书等）
+                    已经在上面那一页里，不用下载。
+                  </div>
+                </div>
+              )}
+
+              {marketSkills.map((sk) => (
+                <div
+                  key={sk.id}
+                  className="rounded-lg p-3 mb-2 flex items-start gap-3"
+                  style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[13px] font-semibold" style={{ color: 'var(--ink)' }}>
+                        {sk.name}
+                      </span>
+                      {sk.files > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--paper)', color: 'var(--ink-soft)' }}>
+                          {sk.files} 个附件
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11.5px] leading-relaxed" style={{ color: 'var(--ink-soft)' }}>
+                      {sk.description}
+                    </div>
+                  </div>
+                  <button
+                    disabled={sk.installed || marketBusy === sk.id}
+                    onClick={() => installFromMarket(sk)}
+                    className="px-2.5 py-1.5 rounded text-[12px] shrink-0"
+                    style={{
+                      background: sk.installed ? 'var(--paper)' : 'var(--accent)',
+                      color: sk.installed ? 'var(--ink-soft)' : 'var(--accent-ink)',
+                      cursor: sk.installed ? 'default' : 'pointer',
+                    }}
+                  >
+                    {sk.installed ? '已装' : marketBusy === sk.id ? '装…' : '下载'}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div
+              className="px-4 py-2 text-[11px] shrink-0"
+              style={{ borderTop: '1px solid var(--line)', color: 'var(--ink-soft)' }}
+            >
+              装完默认启用。不想用了在本页关掉开关，正文就不会进上下文。
+            </div>
           </div>
         </div>
       )}

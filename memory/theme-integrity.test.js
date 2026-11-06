@@ -43,8 +43,23 @@ function assert(cond, msg) { if (!cond) throw new Error(msg); }
 const cssSrc = fs.readFileSync(CSS_PATH, 'utf8');
 const themesSrc = fs.readFileSync(THEMES_PATH, 'utf8');
 
-/** themes.js 里注册的主题 id */
-const jsIds = [...themesSrc.matchAll(/id:\s*'([^']+)'/g)].map((m) => m[1]);
+/**
+ * 实际要校验的主题 id。
+ *
+ * ⚠ 2026-11-01 主题系统重做：原来有 12 套配色（墨金/赭石/…）存在 THEMES 数组里，
+ *   现在只剩「浅色 / 深色」两套，由 themes.js 的 ACTIVE_THEMES 指定。
+ *   以前这里是正则抽 `id: 'xxx'`，重做后会抽到 MODES 的 light/dark/system
+ *   （那不是 CSS 主题 id），于是全套报"变量缺失"。
+ *   → 改成读 ACTIVE_THEMES，改主题映射时测试自动跟上。
+ */
+const ACTIVE = {};
+{
+  const m = themesSrc.match(/ACTIVE_THEMES\s*=\s*\{([\s\S]*?)\}/);
+  if (m) {
+    for (const kv of m[1].matchAll(/(\w+)\s*:\s*'([^']+)'/g)) ACTIVE[kv[1]] = kv[2];
+  }
+}
+const jsIds = [...new Set(Object.values(ACTIVE))];
 
 /**
  * 抽某个主题的 CSS 变量。
@@ -66,8 +81,11 @@ function varsOf(themeId) {
 // ===========================================================
 console.log('一、CSS 与 JS 同步');
 
-check('themes.js 里注册了 10 套主题', () => {
-  assert(jsIds.length >= 10, `实际只有 ${jsIds.length} 套：${jsIds.join(', ')}`);
+check('浅色与深色两套主题都在 ACTIVE_THEMES 里注册', () => {
+  assert(ACTIVE.light, 'ACTIVE_THEMES 缺 light');
+  assert(ACTIVE.dark, 'ACTIVE_THEMES 缺 dark');
+  assert(ACTIVE.light !== ACTIVE.dark, 'light 和 dark 指向同一套 CSS，切模式不会有变化');
+  assert(jsIds.length === 2, `应该正好 2 套，实际 ${jsIds.length} 套：${jsIds.join(', ')}`);
 });
 
 check('每套主题在 index.css 里都有 [data-theme] 定义', () => {
@@ -205,11 +223,15 @@ check('danger 与 ok 在各自背景上可读', () => {
   assert(bad.length === 0, `状态色太淡：\n    ${bad.join('\n    ')}`);
 });
 
-check('高对比主题确实达到最高对比度', () => {
-  const v = varsOf('contrast');
-  assert(v, 'contrast 主题缺失');
-  const c = contrast(v.paper, v.ink);
-  assert(c >= 15, `高对比主题只有 ${c.toFixed(2)}:1，不够「高对比」（应 ≥ 15）`);
+check('深色主题的底色确实比浅色暗（切模式看得出变化）', () => {
+  const l = varsOf(ACTIVE.light);
+  const d = varsOf(ACTIVE.dark);
+  assert(l && l.paper, `${ACTIVE.light} 缺 paper`);
+  assert(d && d.paper, `${ACTIVE.dark} 缺 paper`);
+  assert(
+    luminance(d.paper) < luminance(l.paper) - 0.2,
+    `深浅底色太接近：light=${l.paper} dark=${d.paper} —— 用户点"深色"会以为没生效`,
+  );
 });
 
 // ===========================================================

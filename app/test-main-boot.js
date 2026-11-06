@@ -205,6 +205,26 @@ section('一·五、打包布局：路径不许写死 ../..，网络失败必须
  *   猜是没有出路的：那四个值任何一件都能一眼定性。
  */
 const mainSrc = fs.readFileSync(path.join(ROOT, 'app', 'electron', 'main.js'), 'utf8');
+
+/**
+ * 剥掉注释再断言（2026-11-03 加）。
+ *
+ * ⚠⚠ 这条栽过不止三次：判据扫源码时连着注释一起扫，于是
+ *   「代码里已经没有 X 了」这种断言，被一句**解释为什么删掉 X** 的注释弄红。
+ *   反过来的坑也一样：注释里写着"必须有 X"，其实代码早删了。
+ *
+ * ⚠ 只剥两种，绝不碰字符串内容：
+ *     · 整行注释（行首可选空白 + //）
+ *     · 块注释（斜杠星号 … 星号斜杠）
+ *   **不剥行尾的 //** —— 提示词里有 `https://` 这类地址，
+ *   按 `//` 一刀切会把后半行吃掉，断言就变成在扫半个句子。
+ */
+function stripComments(src) {
+  return String(src)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
 /**
  * ⚠ 正则要求 `../..` **后面还有第三段**。
  *   否则 `const ROOT = path.join(__dirname, '..', '..')`（ROOT 自己的定义）
@@ -273,16 +293,33 @@ check('★ 系统提示必须区分「要内容」与「要整理归档」', () 
   assert(/「」/.test(seg), '系统提示没规定对白用「」—— 实测出现了一开一关的引号');
   assert(!/^'你是长篇小说的写作助手，直接输出正文。'/m.test(seg),
     '那句把模型往续写上推的提示还在');
-  // ⚠ 2026-10-16 羽毛菌定的称呼规则：只能叫「老板」，亲属称谓一律不许。
-  //   这条**只能写在系统提示里** —— 工具描述、界面文案模型都读不到，
-  //   而系统提示是它每一轮都会读的那一份（同 write_note 那条教训）。
-  assert(/老板/.test(seg), '系统提示里没有「只称老板」这条 —— 模型会顺口叫别的');
-  assert(/亲属|亲密称谓/.test(seg),
-    '系统提示只写了「叫老板」，没写清**不许用亲属/亲密称谓** —— '
-    + '模型很可能理解成「老板是首选、别的也行」');
-  assert(/只针对/.test(seg),
-    '没说这条限制只针对「对用户的称呼」—— 会被误用到小说正文里，'
-    + '把人物之间的称呼也一起禁掉');
+  /**
+   * 称呼规则（2026-11-03 改版）。
+   *
+   * ⚠ 之前钉的是「系统提示里必须出现『老板』」。现在默认值换成「主笔」，
+   *   而且**称谓可由用户自定义** —— 所以不能再去断言某个固定字面量，
+   *   要断言的是**机制**：
+   *     1. 数组里留了占位符（说明这段不是写死的）；
+   *     2. 有一个 systemPromptFor() 负责替换；
+   *     3. 两处发系统提示都走它，没有裸发 SYSTEM_PROMPT 的。
+   *   具体规则文本由 `test-honorific.js` 单独测（那边能真的 require honorific）。
+   */
+  const promptStart = mainSrc.indexOf('const SYSTEM_PROMPT = [');
+  // ⚠ 必须从这个位置往后找 join：文件里更早的地方还有别的 ].join(...)，
+  //   不带起点搜出来的下标比起点还小，切片直接是空串（判据就会红得莫名其妙）。
+  const joined = stripComments(mainSrc.slice(promptStart, mainSrc.indexOf("].join('\\n')", promptStart)));
+  assert(/@@ADDRESS@@/.test(joined),
+    '系统提示里没有称呼占位符 —— 称谓又被写死了，用户自定义会失效');
+  assert(!/老板/.test(joined),
+    '旧默认值「老板」还在系统提示里 —— 用户改了称谓也会被叫回去');
+  assert(/function systemPromptFor/.test(mainSrc),
+    '没有 systemPromptFor() —— 谁去替换那个占位符？');
+  const rawSends = (mainSrc.match(/content: SYSTEM_PROMPT\b/g) || []).length;
+  assert(rawSends === 0,
+    `还有 ${rawSends} 处直接发 SYSTEM_PROMPT（占位符会原样进提示词）`);
+  assert((mainSrc.match(/content: systemPromptFor\(config\)/g) || []).length === 2,
+    '发系统提示的入口不是 2 处，新增/漏改了一条链路');
+
 });
 
 check('★★ 范围守卫：协议令牌是一次性的，且锁着时无效', () => {
@@ -357,7 +394,9 @@ check('★ 单条大消息超预算时要裁（ensure() 只丢历史，压不动
   // 引用材料被拼进**最后一条 user**，它压不动。
   const i = mainSrc.indexOf('guard.ensure()');
   assert(i > 0, '找不到 guard.ensure()');
-  const seg = mainSrc.slice(i, i + 1600);
+  // ⚠ 窗口别写太窄：这段注释只增不减，写死 1600 时 while 已经在 2249 字符外,
+  //   判据会"红得莫名其妙"（产品逻辑其实一直在）。
+  const seg = mainSrc.slice(i, i + 4000);
   assert(/budgetTokens/.test(seg) && /droppedOld/.test(seg),
     'ensure() 之后没有总量闸 —— 78KB 会原样发出去（2026-10-15 实测事故）');
   // ⚠ 第一版只裁「最后一条 user」，而超标在多条历史上 → 裁了等于没裁。
@@ -373,7 +412,13 @@ check('★ 单条大消息超预算时要裁（ensure() 只丢历史，压不动
 section('二、这个检查本身是有效的');
 check('★ 桩确实让 main.js 跑了（不是"加载了空文件"）', () => {
   assert(gotPaths.length >= 2, `app.getPath 只被调用 ${gotPaths.length} 次，main.js 好像没执行`);
-  assert(switches.includes('disable-gpu'),
+  /**
+   * ⚠ 断言 no-sandbox 而不是 disable-gpu：
+   *   GPU 2026-10 已改成**默认开启**（只有 WT_NO_GPU=1 才禁），
+   *   还在断言 disable-gpu 等于要求产品回到旧行为。
+   *   这里要验的是"main.js 真的执行到了开关那一段"，用两分支都有的那个开关。
+   */
+  assert(switches.includes('no-sandbox'),
     'app.commandLine.appendSwitch 没被调用 —— 加载没走到那一段');
 });
 

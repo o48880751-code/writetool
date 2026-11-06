@@ -45,7 +45,7 @@ const RING_R = 8;
 const RING_C = 2 * Math.PI * RING_R;
 
 /** 气泡底色：WorkBuddy 那种偏冷的深灰蓝。深浅主题下都读得清白字，所以不跟主题走 */
-const TIP_BG = '#3d4b5c';
+const TIP_BG = 'var(--tip-bg)';
 
 function fmtTokens(n) {
   if (n == null) return '—';
@@ -98,20 +98,21 @@ export default function CtxMeter({ pollMs = 4000 }) {
   }, [open]);
 
   /**
-   * ⚠⚠ **分母用 `numCtx`（用户设置的窗口），不是 `historyBudget`**。
+   * ⚠⚠ **分母必须和主进程判断用的那个数一致**（2026-10-29 修）。
    *
-   * historyBudget = numCtx − reserve。他把窗口设成 131072、预留 4096，
-   * 于是 historyBudget 是 126976 —— 拿它当分母，他看到的百分比
-   * 会和「我明明设了 131072」对不上。
+   * 原来分母用 `numCtx`（131072），而 `main.js` 判断超限用的是
+   * `numCtx × 0.6`（78643）—— 于是**进度条显示 60% 时实际已经满了**，
+   * 用户看到"才用了一半"却被拒绝发送，合理地震惊。
    *
-   * 两个都留着：百分比按 numCtx 算，同时把 reserve 显式写出来，
-   * 这样"为什么可用空间比窗口小"就一目了然，而不是让人猜。
+   * 现在两边都按 `numCtx × 0.6` 算，进度条到 100% 就是真的发不出去。
+   * `historyBudget`（numCtx − reserve）在 context-budget.js 里还有别的用途，
+   * 但它**不是**这一轮真正能用的量，不能拿来当分母。
    */
-  const win = u ? (u.numCtx || u.historyBudget || 0) : 0;
-  const budget = u ? (u.historyBudget || 0) : 0;
+  const win = u ? (u.numCtx || 0) : 0;
+  const budget = win > 0 ? Math.max(1024, Math.round(win * 0.6)) : 0;
   const used = u ? (u.usedTokens || 0) : 0;
-  const pct = win > 0 ? used / win : 0;
-  const hasData = !!(u && win > 0);
+  const pct = budget > 0 ? used / budget : 0;
+  const hasData = !!(u && budget > 0);
 
   let color = 'var(--ink-soft)';
   let hint = '还没有发过消息';
@@ -137,7 +138,7 @@ export default function CtxMeter({ pollMs = 4000 }) {
    */
   const arc = hasData ? Math.min(1, Math.max(0.02, pct)) : 0;
   const tipText = hasData
-    ? `${(pct * 100).toFixed(1)}% · ${fmtK(used)} / ${fmtK(win)} 上下文已使用`
+    ? `${(pct * 100).toFixed(1)}% · ${fmtK(used)} / ${fmtK(budget)} 上下文已使用`
     : '上下文用量 —';
 
   return (
@@ -191,7 +192,7 @@ export default function CtxMeter({ pollMs = 4000 }) {
       >
         <span
           className="block rounded-lg px-2.5 py-1 text-[12px] whitespace-nowrap tabular-nums"
-          style={{ background: TIP_BG, color: '#fff', boxShadow: '0 6px 18px rgba(0,0,0,.22)' }}
+          style={{ background: TIP_BG, color: 'var(--tip-ink)', boxShadow: '0 6px 18px rgba(0,0,0,.22)' }}
         >
           {tipText}
         </span>
@@ -226,7 +227,9 @@ export default function CtxMeter({ pollMs = 4000 }) {
           <div className="flex justify-between" style={{ color: 'var(--ink-soft)' }}>
             <span>已用</span>
             <span className="tabular-nums">
-              {fmtTokens(used)} / {fmtTokens(win)} token（{(pct * 100).toFixed(1)}%）
+              {fmtTokens(used)} / {fmtTokens(budget)} token（{(pct * 100).toFixed(1)}%）
+              {/* ⚠ 分母是 budget（numCtx × 0.6），不是 win —— 和主进程判断超限用的数一致。
+                  显示 win 的话，用户会以为「还有一半空间」实际已经满了。 */}
             </span>
           </div>
           {u.reserve ? (

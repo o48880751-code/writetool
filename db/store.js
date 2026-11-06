@@ -89,7 +89,7 @@ const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
  *   只改 schema.sql 是不够的 —— `IF NOT EXISTS` 会把整条建表语句跳过，
  *   老用户拿到的还是旧结构（这正是 `_addMissingColumns` 当初存在的理由）。
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 
 /**
  * Skill 配套文件的路径校验与归一化。
@@ -197,6 +197,10 @@ class Store {
       if (cur < 1) this._upgradeTo1();
       // v1 → v2：messages 加 reasoning_content
       if (cur < 2) this._upgradeTo2();
+      // v2 → v3：messages 加 refs（这一轮 @ 了什么）
+      if (cur < 3) this._upgradeTo3();
+      // v3 → v4：补上 v3 漏加的 refs 列（清单忘了写，见 _addMissingColumns 注释）
+      if (cur < 4) this._upgradeTo4();
       // ⚠ 将来加 v3 时：if (cur < 3) this._upgradeTo3();
       this._setUserVersion(SCHEMA_VERSION);
     }
@@ -221,6 +225,28 @@ class Store {
    * 这样补列规则只有一份，不会两处不一致。
    */
   _upgradeTo2() {
+    this._addMissingColumns();
+  }
+
+  /**
+   * v3：给 messages 加 refs（2026-10-29）。
+   *
+   * 存的是这一条用户消息 @ 了哪些文件/技能。
+   * ⚠ 和 v2 一样靠 `_addMissingColumns()` 扫 schema.sql 补列 ——
+   *   让"建表"和"补列"共用同一份定义，不会出现两处写法不一致。
+   */
+  _upgradeTo3() {
+    this._addMissingColumns();
+  }
+
+  /**
+   * v4：补 v3 漏掉的 refs 列（2026-10-29）。
+   *
+   * ⚠ 为什么不是改 v3 就完事：v3 的  已经写进用户库里了，
+   *   改清单不会让  再跑一次 —— **必须再升一版**，
+   *   否则那批已经升到 3 的库永远缺这一列。
+   */
+  _upgradeTo4() {
     this._addMissingColumns();
   }
 
@@ -273,6 +299,17 @@ class Store {
       messages: {
         // 思考内容：必须落库，否则多轮对话回传不了（DeepSeek 直接 400）
         reasoning_content: 'TEXT',
+        /**
+         * 这一条用户消息 @ 了什么（2026-10-29，库 v3）。
+         *
+         * ⚠⚠ 加列**必须改这个清单**，只改 `schema.sql` 是不够的：
+         *   `CREATE TABLE IF NOT EXISTS` 遇到已存在的表会整句跳过，
+         *   老用户拿到的还是旧结构。2026-10-29 就是这样：
+         *   `SCHEMA_VERSION` 改成 3、`_upgradeTo3` 也调了，
+         *   但漏了这个清单 → `user_version` 写成 3、列却没加上，
+         *   之后所有读 `refs` 的代码都拿不到值，而且**没有任何报错**。
+         */
+        refs: 'TEXT',
       },
     };
     for (const [table, cols] of Object.entries(wanted)) {
@@ -303,11 +340,41 @@ class Store {
   // 项目
   // ============================================================
 
-  createProject({ id, name, coverPath = null, settingsJson = '{}' }) {
+  /**
+   * 建项目。
+   *
+   * ⚠ `kind`（long / short / drama）**存进 settings_json，不加新列**（2026-11-01）。
+   *   加列要写 ALTER TABLE 迁移，而这个字段只是"渲染时按类型分流"的提示，
+   *   `settings_json` 本来就是留给这种不参与查询的自由字段的。
+   */
+  createProject({ id, name, coverPath = null, kind = 'long', audience = '', settingsJson }) {
+    /**
+     * ⚠ `audience`（male / female / 空）也存在 settings_json 里（2026-11-01）。
+     *   目的是**让后续写作知道这本书是男频还是女频** ——
+     *   写对白和爽点时方向不同，模型不该靠猜。
+     *   空字符串表示"不限"，就不写这个字段，省得存一堆无意义的值。
+     */
+    const sj = settingsJson
+      || JSON.stringify(audience ? { kind, audience } : { kind });
     this.prep(
       'INSERT INTO projects (id, name, cover_path, settings_json) VALUES (?,?,?,?)'
-    ).run(id, name, coverPath, settingsJson);
+    ).run(id, name, coverPath, sj);
     return id;
+  }
+
+  /**
+   * 取项目类型。老项目（settings_json 里没有 kind）一律当 long ——
+   * 它们建的时候只有长篇那一套骨架，这是事实，不是猜。
+   */
+  projectKind(id) {
+    const row = this.prep('SELECT settings_json FROM projects WHERE id = ?').get(id);
+    if (!row) return 'long';
+    try {
+      const k = JSON.parse(row.settings_json || '{}').kind;
+      return k === 'short' || k === 'drama' ? k : 'long';
+    } catch (_) {
+      return 'long';
+    }
   }
 
   getProject(id) {
@@ -320,6 +387,21 @@ class Store {
   }
 
   /**
+   * 项目列表 + 解析好的 `kind`（2026-11-01）。
+   *
+   * ⚠ 书架卡片要显示「长篇 / 短篇 / 短剧」，
+   *   而 kind 存在 `settings_json` 里 —— 让前端自己 JSON.parse 等于
+   *   把"类型存在哪"这个知识复制到渲染层，以后改存储要改两处。
+   *   这里统一解析一次，前端只认 `p.kind`。
+   *
+   * ⚠ 逐行解析而不是 SQL 里取 JSON：项目通常个位数，
+   *   多几次内存判断远比对 sqlite 的 JSON1 扩展有依赖划算。
+   */
+  listProjectsWithKind() {
+    return this.listProjects().map((p) => ({ ...p, kind: this.projectKind(p.id) }));
+  }
+
+  /**
    * 改项目名。
    *
    * ⚠ 不改项目文件夹的名字（文件夹名就是 id，改名会让用户
@@ -329,6 +411,19 @@ class Store {
    * 同名时直接报错而不是静默接受：两个同名项目在弹窗里
    * 分不清，用户的直觉是"重名了，帮我合并/提示"。
    */
+  /**
+   * 设书架封面（项目内的**相对路径**，空串 = 去掉封面）。
+   *
+   * ⚠⚠ 刻意**不动 `updated_at`**。
+   *   书架的大横幅取的是"最近在写的那一本"（按 updated_at 倒序），
+   *   换个封面把这本书顶到第一位，用户会以为自己在它上面写过东西。
+   *   这是"元数据变了但内容没变"，不该影响排序。
+   */
+  setProjectCover(id, coverPath) {
+    return this.prep('UPDATE projects SET cover_path = ? WHERE id = ?')
+      .run(coverPath ? String(coverPath) : null, id).changes;
+  }
+
   renameProject(id, name) {
     const n = String(name == null ? '' : name).trim();
     if (!n) throw new Error('项目名不能为空');
@@ -643,21 +738,29 @@ class Store {
   }
 
   /** 追加消息；同时把对话的 updated_at 顶上去，让列表按活跃度排序 */
-  addMessage({ id, conversationId, role, content = '', toolName = null, toolOk = null, tokensIn = 0, tokensOut = 0, ms = 0, traceId = null, reasoningContent = null }) {
+  addMessage({ id, conversationId, role, content = '', toolName = null, toolOk = null, tokensIn = 0, tokensOut = 0, ms = 0, traceId = null, reasoningContent = null, refs = null }) {
     const mid = id || `ms-${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
     /**
      * ⚠ `reasoning_content` 必须存（2026-10-21）：
      *   DeepSeek 的推理模型在下一轮会校验"上一轮的思考内容有没有带回来"，
      *   只留在内存里的话，用户刷新页面或重开对话就再也接不上了，整轮 400。
+     *
+     * ⚠ `refs` 必须存（2026-10-29，库 v3）：
+     *   引用是用户输入的一部分。不存的话，那条消息只剩「删除这个文件」，
+     *   他完全不记得当时 @ 的是哪一章。
      */
     this.prep(
       `INSERT INTO messages (id, conversation_id, role, content, tool_name, tool_ok,
-                             tokens_in, tokens_out, ms, trace_id, reasoning_content)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+                             tokens_in, tokens_out, ms, trace_id, reasoning_content, refs)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
     ).run(mid, conversationId, role, String(content || ''), toolName,
       toolOk === null || toolOk === undefined ? null : (toolOk ? 1 : 0),
       tokensIn | 0, tokensOut | 0, ms | 0, traceId,
-      reasoningContent == null ? null : String(reasoningContent));
+      reasoningContent == null ? null : String(reasoningContent),
+      // 只存渲染需要的三个字段，不存 content —— 文件正文可能几万字，存两份纯浪费
+      refs && refs.length
+        ? JSON.stringify(refs.map((r) => ({ kind: r.kind, id: r.id, name: r.name })))
+        : null);
     this.prep(`UPDATE conversations SET updated_at = datetime('now','localtime') WHERE id = ?`).run(conversationId);
     return this.getMessage(mid);
   }
@@ -726,8 +829,20 @@ class Store {
  */
   listMessages(conversationId, limit = 500) {
     return this.prep(
+      /**
+       * ⚠⚠ 外层是**显式列清单**，内层才是 `*`（2026-10-29 修）。
+       *
+       * 加了 `refs` 列、也把值写进库了，但这里漏掉它 ——
+       * 于是 UI 拿到的消息**永远没有 refs**，气泡上的 `#文件名` 标签一个都不显示。
+       * 而库里有值、日志也没错，看起来像"前端渲染坏了"，
+       * 实际是这一句 SELECT 没带出来。
+       *
+       * ⚠ 以后给 messages 加列，**这里也必须加**：
+       *   `addMessage`（写）、`listMessages`（读）、`schema.sql`（建表）、
+       *   `_addMissingColumns` 的 wanted 清单（补列）—— 四处缺一个就断链。
+       */
       `SELECT id, conversation_id, role, content, tool_name, tool_ok,
-              tokens_in, tokens_out, ms, trace_id, created_at, reasoning_content
+              tokens_in, tokens_out, ms, trace_id, created_at, reasoning_content, refs
        FROM (
          SELECT rowid AS seq, * FROM messages
          WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?
@@ -759,6 +874,66 @@ class Store {
     return this.prep(
       `SELECT * FROM skills WHERE (project_id = ? OR project_id IS NULL) ${where} ORDER BY type DESC, name`
     ).all(projectId);
+  }
+
+  /**
+   * 本机装过的全部技能名（跨项目，含已停用的）。
+   *
+   * ## 为什么需要它
+   *
+   * 广场列表要标「已装」，得知道这台机器上装过什么。
+   * 原来那处调用写的是 `listSkills(null)`，而它的 SQL 是
+   * `WHERE (project_id = ? OR project_id IS NULL)` —— 传 null 时
+   * **`project_id = NULL` 在 SQL 里恒为 NULL（不是 true）**，
+   * 于是只剩 `project_id IS NULL` 生效，**只查得到全局技能**。
+   *
+   * 而从广场装的技能是**项目级**的（`project_id` 指向当前项目），
+   * 永远查不到 → 广场里「已装」标记一次都没亮过，
+   * 用户装完再进广场又看到「下载」，以为没装上。
+   *
+   * ⚠ 不带 `project_id` 条件就是"全部"；也不过滤 `enabled` ——
+   *   装过但关掉的，对用户来说仍然是"已经装过"。
+   */
+  allSkillNames() {
+    return this.prep('SELECT name FROM skills')
+      .all()
+      .map((r) => String(r.name || '').trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * 按名字找一条**用户装的**技能（跨项目）。
+   *
+   * ⚠ 只找 `type = 'custom'`：内置技能（type = 'builtin'）不能用市场包覆盖，
+   *   否则用户从广场下一个同名的，会把内置的那份顶掉，而内置的是我们维护的。
+   */
+  findCustomSkillByName(name) {
+    return this.prep(
+      "SELECT * FROM skills WHERE name = ? AND type = 'custom' ORDER BY created_at LIMIT 1"
+    ).get(String(name || '').trim()) || null;
+  }
+
+  /** 把技能改挂到某个项目 / 全局（projectId = null）。2026-10-30：市场技能统一转全局用 */
+  setSkillProject(id, projectId) {
+    this.prep('UPDATE skills SET project_id = ? WHERE id = ?').run(projectId, id);
+    return { ok: true };
+  }
+
+  /** 更新技能正文（重装时覆盖） */
+  updateSkillContent(id, content) {
+    this.prep('UPDATE skills SET prompt_content = ? WHERE id = ?').run(String(content || ''), id);
+    return { ok: true };
+  }
+
+  /**
+   * 清空某个技能的全部配套文件（重装前）。
+   *
+   * ⚠ 配套文件是 `ON DELETE CASCADE` 挂在技能上的，所以要重建就得先删干净 ——
+   *   否则新旧两版同名文件会同时存在，读的时候拿到哪一份不确定。
+   */
+  clearSkillFiles(skillId) {
+    this.prep('DELETE FROM skill_files WHERE skill_id = ?').run(skillId);
+    return { ok: true };
   }
 
   /**
@@ -847,6 +1022,21 @@ class Store {
     return this.prep(
       'SELECT path, kind, content, executable FROM skill_files WHERE skill_id = ? ORDER BY path'
     ).all(skillId);
+  }
+
+  /**
+   * 取单个配套文件的内容（2026-10-30 加，给 `read_reference` 工具用）。
+   *
+   * ⚠ 为什么不复用 `getSkillFiles` 再筛：一个技能可能有 40 个附件、
+   *   上百 KB。模型每次只读一份，全量取出来再挑是白花 IO 和内存。
+   *
+   * ⚠ 查不到返回 `null` 而不是空串 —— 调用方要能区分
+   *   "文件不存在"和"文件是空的"，前者该提示模型换个路径。
+   */
+  getSkillFile(skillId, relPath) {
+    return this.prep(
+      'SELECT path, kind, content, executable FROM skill_files WHERE skill_id = ? AND path = ?'
+    ).get(skillId, relPath) || null;
   }
 
   getSkillFile(skillId, path) {

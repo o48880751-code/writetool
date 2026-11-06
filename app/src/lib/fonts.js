@@ -98,11 +98,22 @@ export function useFonts() {
     injectFontFaces((ps || []).filter((p) => set.has(p.id)));
   };
 
+  /**
+   * 下载并安装。
+   *
+   * ⚠⚠ 外面再套一个超时（2026-11-02）：主进程那边已经修好了"收满不结束"的死等，
+   *   但这条链路上任何一环卡住，界面都会永远显示"下载中 100%"，
+   *   而用户唯一的出路是关掉设置页——那正是他遇到的"卡在 100%"。
+   *   宁可在两分半后主动报错，也不要让它静默挂着。
+   */
   const install = async (id) => {
     setError(null);
     setInstalling({ id, loaded: 0, total: 0 });
     try {
-      await window.api.font.install({ id });
+      await Promise.race([
+        window.api.font.install({ id }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('下载超时（2 分半没完成），换个网络或改用「从本地文件装字体」')), 150000)),
+      ]);
       await reapply();
     } catch (e) {
       setError(e.message || '下载失败');
@@ -121,5 +132,24 @@ export function useFonts() {
     }
   };
 
-  return { presets, installed, installing, error, install, uninstall, refresh };
+  /**
+   * 从本地 .ttf/.otf 装字体。
+   *
+   * ⚠ 这是网络被掐时的唯一生路：内置那几款走 CDN，下不下来不由程序决定；
+   *   而用户自己下好的字体文件，导进来永远能用。
+   */
+  const importLocal = async () => {
+    setError(null);
+    try {
+      const r = await window.api.font.importLocal({});
+      if (!r || r.canceled) return null;
+      await reapply();
+      return r.font || null;
+    } catch (e) {
+      setError(e.message || '导入失败');
+      return null;
+    }
+  };
+
+  return { presets, installed, installing, error, install, uninstall, importLocal, refresh };
 }

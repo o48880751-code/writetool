@@ -147,8 +147,15 @@ app.whenReady().then(async () => {
   const j = (c) => win.webContents.executeJavaScript(c);
 
   // 打开设置
+  /**
+   * ⚠ 2026-11-06：书架上那颗按钮被裁成纯图标（只剩 ⚙），textContent 里
+   *   没有"设置"两个字 —— 按文字找会找不到，然后整串判据连带全红（5 条），
+   *   看着像"设置页坏了"，其实是判据的定位方式过时。
+   *   优先走 data-testid，兜底才按文字找。
+   */
   const opened = await j(`(() => {
-    const b = [...document.querySelectorAll('button')].find((x) => /设置/.test(x.textContent));
+    let b = document.querySelector('[data-testid="bookshelf-settings"]');
+    if (!b) b = [...document.querySelectorAll('button')].find((x) => /设置/.test(x.textContent));
     if (!b) return false;
     b.click();
     return true;

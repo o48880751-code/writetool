@@ -184,6 +184,23 @@ export default function ProjectSwitcher({
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(!!startCreating);
   const [newName, setNewName] = useState('');
+
+  /**
+   * 新建项目时要选的**创作类型**（2026-11-01 加）。
+   *
+   * ⚠ 这个不是装饰：它决定建哪套骨架。
+   *   长篇是 设定/ 卷纲/ 章节/，短篇是三个根目录文件，
+   *   短剧是 剧集/EP001/{剧本,视觉设定,分镜}。
+   *   建错了用户打开会一脸茫然（写短剧的人看到一屏长篇的目录）。
+   */
+  const [newKind, setNewKind] = useState('long');
+
+  /** 三种类型的展示名 —— 放常量里，别在 JSX 里散着写 */
+  const KINDS = [
+    { id: 'long', label: '长篇' },
+    { id: 'short', label: '短篇' },
+    { id: 'drama', label: '短剧 / 漫剧' },
+  ];
   const newRef = useRef(null);
 
   useEffect(() => {
@@ -207,7 +224,7 @@ export default function ProjectSwitcher({
     if (!name) return;
     setBusy(true);
     try {
-      await onCreate(name);
+      await onCreate(name, newKind);
       setCreating(false);
       setNewName('');
     } catch (e) {
@@ -315,7 +332,7 @@ export default function ProjectSwitcher({
               </button>
               <button onClick={doImportReal} disabled={busy} data-testid="btn-import-confirm"
                       className="flex-1 py-2 rounded-lg text-[13px] disabled:opacity-40"
-                      style={{ background: 'var(--accent)', color: '#fff' }}>
+                      style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}>
                 {busy ? '导入中…' : '选择文件夹'}
               </button>
             </div>
@@ -414,32 +431,60 @@ export default function ProjectSwitcher({
             </button>
           </div>
 
-          {/* 新建输入框 */}
+          {/* 新建输入框 —— 先选类型，再起名 */}
           {creating && (
             <div
-              className="shrink-0 flex items-center gap-2 px-5 py-3 border-b"
+              className="shrink-0 px-5 py-3 border-b"
               style={{ borderColor: 'var(--line)', background: 'var(--accent-soft)' }}
             >
-              <input
-                ref={newRef}
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') doCreate();
-                  if (e.key === 'Escape') setCreating(false);
-                }}
-                placeholder="给新小说起个名字"
-                className="flex-1 px-2.5 py-1.5 rounded text-[13px] outline-none"
-                style={{ background: 'var(--paper)', color: 'var(--ink)' }}
-              />
-              <button
-                onClick={doCreate}
-                disabled={busy || !newName.trim()}
-                className="px-3 py-1.5 rounded text-[12.5px] disabled:opacity-40"
-                style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
-              >
-                {busy ? '…' : '创建'}
-              </button>
+              {/**
+                * ⚠ 类型放在**输入框上面**，因为它决定建哪套骨架：
+                *   选错了用户建完打开看到一堆不相干的目录。
+                *   默认长篇 —— 和绝大多数用户的第一本书一致。
+                */}
+              <div className="flex items-center gap-1.5 mb-2">
+                {KINDS.map((k) => (
+                  <button
+                    key={k.id}
+                    onClick={() => setNewKind(k.id)}
+                    className="px-2.5 py-1 rounded-full text-[11.5px]"
+                    style={{
+                      background: newKind === k.id ? 'var(--accent)' : 'var(--paper)',
+                      color: newKind === k.id ? 'var(--accent-ink)' : 'var(--ink-soft)',
+                      border: `1px solid ${newKind === k.id ? 'transparent' : 'var(--line)'}`,
+                    }}
+                    title={
+                      k.id === 'long' ? '设定 / 卷纲 / 章节'
+                        : k.id === 'short' ? '设定.md / 小节大纲.md / 正文.md'
+                          : '剧集/EP001/{剧本, 视觉设定, 分镜}'
+                    }
+                  >
+                    {k.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  ref={newRef}
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') doCreate();
+                    if (e.key === 'Escape') setCreating(false);
+                  }}
+                  placeholder="给你的作品起个名字"
+                  className="flex-1 px-2.5 py-1.5 rounded text-[13px] outline-none"
+                  style={{ background: 'var(--paper)', color: 'var(--ink)' }}
+                />
+                <button
+                  onClick={doCreate}
+                  disabled={busy || !newName.trim()}
+                  className="px-3 py-1.5 rounded text-[12.5px] disabled:opacity-40"
+                  style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
+                >
+                  {busy ? '…' : '创建'}
+                </button>
+              </div>
             </div>
           )}
 

@@ -1,7 +1,8 @@
 {
   "name": "writetool",
-  "version": "1.2.6",
+  "version": "2.0.4",
   "description": "本地长篇小说写作工具，数据不出本机",
+  "displayName": "长卷",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
@@ -36,7 +37,7 @@
       "target": [
         "nsis"
       ],
-      "artifactName": "WriteTool-${version}-setup.${ext}",
+      "artifactName": "InkScroll-${version}-setup.${ext}",
       "icon": "build/icon.ico"
     },
     "nsis": {
@@ -46,7 +47,8 @@
       "allowElevation": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "WriteTool 长篇写作",
+      "shortcutName": "长卷",
+      "uninstallDisplayName": "长卷 ${version}",
       "deleteAppDataOnUninstall": false,
       "menuCategory": false
     },
@@ -133,13 +135,13 @@
     "react-dom": "^19.3.0"
   },
   "homepage": "https://github.com/o48880751-code/writetool#readme",
+  "copyright": "MIT License",
+  "productName": "WriteTool",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/o48880751-code/writetool.git"
   },
   "bugs": {
     "url": "https://github.com/o48880751-code/writetool/issues"
-  },
-  "copyright": "MIT License",
-  "productName": "WriteTool"
+  }
 }

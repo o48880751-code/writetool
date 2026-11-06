@@ -116,7 +116,21 @@ function alignOf(dividerLine) {
  * @returns {Array}
  */
 function parse(src) {
-  const lines = String(src == null ? '' : src).replace(/\r\n?/g, '\n').split('\n');
+  let s = String(src == null ? '' : src).replace(/\r\n?/g, '\n');
+  /**
+   * ⚠⚠ 剥掉文件**开头**的连续 `---`（2026-10-29）。
+   *
+   * 现场：`卷纲/总纲.md` 和 `设定/世界观.md` 顶上躺着三根 `---`，
+   * 预览里变成三条莫名其妙的横线。查下来是**模型写的** ——
+   * 它把"技能文件要写 YAML frontmatter"的习惯带到了小说文件上，
+   * 而且每改一次往开头补一根，越攒越多。
+   *
+   * ⚠ 只剥**开头**：`---` 在正文中间是合法的分隔线，那里不能动。
+   * ⚠ 不改磁盘上的原文：编辑器里还看得见，用户想删自己删 ——
+   *   渲染层做事不能让用户"保存一次就被偷偷改了内容"。
+   */
+  s = s.replace(/^(?:[ \t]*---[ \t]*\n)+/, '');
+  const lines = s.split('\n');
   const blocks = [];
   let i = 0;
   let k = 0;

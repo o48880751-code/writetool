@@ -180,7 +180,9 @@ app.whenReady().then(async () => {
     if (!b) return null;
     const r = b.getBoundingClientRect();
     return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2),
-             glyph: b.textContent };
+             // ⚠ 2026-11-06：按钮从字符（─ □ ✕）改成内联 SVG 了，
+             //   textContent 永远是空 —— 图标变化只能看 SVG 的子节点。
+             glyph: (b.querySelector('svg') || b).innerHTML };
   })()`);
   if (maxR) {
     win.webContents.sendInputEvent({ type: 'mouseMove', x: maxR.x, y: maxR.y });
@@ -192,7 +194,7 @@ app.whenReady().then(async () => {
   const maxed = win.isMaximized();
   const glyph2 = await j(`(() => {
     const b = document.querySelector('[data-win-btn="max"]');
-    return b ? b.textContent : null;
+    return b ? (b.querySelector('svg') || b).innerHTML : null;
   })()`);
   console.log(`  最大化后 isMaximized=${maxed}，按钮图标=${glyph2}（点之前 ${maxR && maxR.glyph}）`);
   check('③ 点「最大化」真的最大化了', () => {

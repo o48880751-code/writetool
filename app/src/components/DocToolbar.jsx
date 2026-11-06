@@ -321,11 +321,10 @@ export default function DocToolbar({
   );
 
   return (
-    <div className="shrink-0 border-b" style={{ borderColor: 'var(--line)' }}>
+    <div className="shrink-0">
       {/* ---------- 书名栏 ---------- */}
       <div
-        className="flex items-center gap-2 px-3 py-1.5"
-        style={{ background: 'var(--paper-2)' }}
+        className="flex items-center gap-2 px-3 py-2"
       >
         <span className="text-[14px]" aria-hidden="true">📖</span>
         <span className="font-semibold text-[14px] truncate"

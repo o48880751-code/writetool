@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ParamGuide from './ParamGuide.jsx';
 import AgreementModal from './AgreementModal.jsx';
 import { BackgroundSection } from './Background.jsx';
-import { THEMES } from '../themes.js';
+import { MODES, normalizeHex, resolveDark, modeDefaults, applyTheme } from '../themes.js';
 // 这两个是 2026-10-12 拆出去的：各自都是几百行，
 // 与设置页的主框架（类目导航 + 渲染分发）不是一回事。
 import ProviderCat from './ProviderCat.jsx';
@@ -65,23 +65,18 @@ const CATS = [
 const VALID_CATS = CATS.map((c) => c.key);
 
 /** 主题预览色：直接把变量值填进 swatch，切换后立刻能看到真实效果 */
-const THEME_SWATCH = {
-  gold: ['#faf9f7', '#8b6f47', '#1f2328'],
-  ochre: ['#fbf6ef', '#a8642a', '#2b1d14'],
-  moss: ['#f4f8f2', '#5b8c51', '#1f2b1e'],
-  ink: ['#eef2f7', '#3c5a91', '#141a24'],
-  slate: ['#eff4f4', '#4a7378', '#172225'],
-  plum: ['#f8f3f8', '#82508c', '#2a1c2e'],
-  night: ['#191919', '#c9a86a', '#e8e6e3'],
-  'night-ink': ['#141821', '#7d9fd4', '#e2e6ef'],
-  'night-moss': ['#151a16', '#7fb07a', '#dfe6de'],
-  contrast: ['#000000', '#ffffff', '#ffffff'],
-};
 
 export default function SettingsPage({
   config, onConfigChange, onClose, projectId, projects,
   /** 轻提示。设置页自己不发 toast，交给 App 统一显示 */
   onToast,
+  /**
+   * 装完技能 / 角色卡后叫一声，让 App 重拉引用源（2026-10-29）。
+   *
+   * ⚠ 不叫的话，用户从广场装完技能回到对话，@ 面板里**看不到它** ——
+   *   必须重启软件才出现。用户只会得出一个结论：「下载了但没装上」。
+   */
+  onDataChanged = null,
   /**
    * 一打开就落到哪个类目（2026-10-14）。
    *
@@ -109,6 +104,8 @@ export default function SettingsPage({
   }, [initialCat]);
   const [local, setLocal] = useState(config || {});
   const [saveMsg, setSaveMsg] = useState('');
+  /** 保存失败的原因（主进程抛的错原样显示，别自己编一句） */
+  const [saveErr, setSaveErr] = useState('');
 
   /**
    * 生成参数：窗口 / 输出上限 / 输出预留。
@@ -187,21 +184,33 @@ export default function SettingsPage({
     setLocal((l) => ({ ...l, ...patch }));
   }, []);
 
+  /**
+   * ⚠ 保存失败**必须说出来**（2026-11-03 加 catch）。
+   *   原来这里没有 catch：主进程拒绝保存（比如称谓填了「干爹」）时，
+   *   Promise 直接变 unhandled rejection —— 界面上什么都不显示，
+   *   用户以为存上了，重启才发现还是旧的。
+   */
   const save = useCallback(async (patch) => {
     setLocal((l) => ({ ...l, ...patch }));
-    await window.api.config.set(patch);
-    const cfg = await window.api.config.get();
-    onConfigChange(cfg);
-    setSaveMsg('已保存');
-    setTimeout(() => setSaveMsg(''), 1500);
+    try {
+      await window.api.config.set(patch);
+      const cfg = await window.api.config.get();
+      onConfigChange(cfg);
+      setSaveErr('');
+      setSaveMsg('已保存');
+      setTimeout(() => setSaveMsg(''), 1500);
+    } catch (e) {
+      setSaveMsg('');
+      setSaveErr(e.message || '保存失败');
+      setTimeout(() => setSaveErr(''), 4000);
+    }
   }, [onConfigChange]);
 
   return (
-    <div className="absolute inset-0 z-40 flex flex-col" style={{ background: 'var(--paper)' }}>
+    <div className="settings-root absolute inset-0 z-40 flex flex-col" style={{ background: 'var(--paper)' }}>
       {/* ---- 顶栏：返回键 + 标题 + 保存提示 ---- */}
       <div
-        className="shrink-0 h-11 flex items-center gap-3 px-4 border-b"
-        style={{ borderColor: 'var(--line)' }}
+        className="shrink-0 h-11 flex items-center gap-3 px-4"
       >
         <button
           onClick={onClose}
@@ -213,6 +222,11 @@ export default function SettingsPage({
         </button>
         <div className="text-[13px] font-semibold">设置</div>
         {saveMsg && <div className="text-[11px]" style={{ color: 'var(--ok)' }}>{saveMsg}</div>}
+        {saveErr && (
+          <div data-testid="settings-save-error" className="text-[11px]" style={{ color: 'var(--danger)' }}>
+            {saveErr}
+          </div>
+        )}
       </div>
 
       <div className="flex-1 flex min-h-0">
@@ -225,12 +239,9 @@ export default function SettingsPage({
             <button
               key={c.key}
               onClick={() => setCat(c.key)}
-              className="flex items-center gap-2 px-2.5 py-2 rounded text-[12.5px] text-left"
-              style={{
-                background: cat === c.key ? 'var(--paper)' : 'transparent',
-                color: cat === c.key ? 'var(--ink)' : 'var(--ink-soft)',
-                fontWeight: cat === c.key ? 600 : 400,
-              }}
+              className="settings-nav-item flex items-center gap-2 px-2.5 py-2 text-[12.5px] text-left"
+              data-on={cat === c.key ? '1' : '0'}
+              aria-current={cat === c.key ? 'page' : undefined}
             >
               <span>{c.icon}</span>
               <span>{c.label}</span>
@@ -245,13 +256,18 @@ export default function SettingsPage({
           （2026-10-16 就因此把参数页的两条提示判成"没有"）。
         */}
         <div className="flex-1 overflow-y-auto min-h-0" data-testid="settings-body">
-          <div className="max-w-2xl px-6 py-5">
+          {/**
+            * ⚠ key={cat} 是**入场动画的开关**（2026-11-06）：
+            *   key 一变 React 就重挂这个子树，CSS 动画从头播一次。
+            *   不加 key 只改内容，动画不会重播（元素还是同一个）。
+            */}
+          <div className="settings-pane max-w-2xl px-6 py-5" key={cat}>
             {cat === 'appearance' && <Appearance local={local} save={save} onToast={onToast} />}
             {cat === 'provider' && (
               <ProviderCat onToast={onToast} onConfigChange={onConfigChange} />
             )}
             {cat === 'skill' && (
-              <SkillCat projectId={projectId} onToast={onToast} />
+              <SkillCat projectId={projectId} onToast={onToast} onDataChanged={onDataChanged} />
             )}
             {cat === 'params' && (
               <Params
@@ -284,8 +300,123 @@ export default function SettingsPage({
 // ===========================================================
 // 外观
 // ===========================================================
+/**
+ * 自定义系统提示词的默认值（2026-11-06）。
+ *
+ * ⚠⚠ 必须与 `electron/main.js` 的 DEFAULT_CUSTOM_PROMPT **逐字一致**。
+ *   两份是没法共享的（一个在主进程、一个在渲染进程，中间隔着 preload），
+ *   所以用判据 test-send-resilience 里的字符串比对来兜底 ——
+ *   只改一处，判据立刻红。
+ */
+const DEFAULT_CUSTOM_PROMPT = [
+  '你是一个创意小说写作助手。你可以读取和写入小说项目目录中的文件。',
+  '当用户要求你写作、修改或审阅内容时，使用可用工具读取现有章节和资料，然后据此撰写或更新内容。',
+  '始终保持与现有故事、角色和世界设定的一致性。请使用与用户相同的语言进行回复。',
+].join('');
+
+/**
+ * 越狱特征库（2026-11-06）。**界面这份只用来提前告知，真正的拦截在主进程。**
+ *
+ * ⚠⚠ 必须与 `electron/main.js` 的 PROMPT_GUARD_SOURCES **逐条一致**。
+ *   两份没法共享（CJS vs ESM），判据里按源串逐条比对，改一处忘另一处会红。
+ * ⚠ 界面份的意义：用户在这里敲「忽略以上所有指令」时，下方立刻出现红字
+ *   「N 处不会生效」。不告诉他的话，他会以为自己设置成功了，
+ *   然后困惑"为什么 AI 还是那套规则"。
+ */
+const PROMPT_GUARD_SOURCES = [
+  // 1) 指令覆盖（忽略/无视 + 上述/之前 + 指令/规则…）
+  '(?:忽略|无视|忘记|抛开|不要管|别管|不必遵守|无需遵守|覆盖|作废|跳过)[^。；;\\n]{0,16}(?:上述|以上|之前|前面|先前|系统|全部|所有|一切)[^。；;\\n]{0,8}(?:指令|规则|提示|约束|限制|要求|命令|规矩)',
+  // 2) 解除限制（没有限制 / 关闭审核 / 绕过过滤…）
+  '(?:没有|不受|无需|取消|解除|关闭|绕过|突破|逃过)[^。；;\\n]{0,8}(?:任何)?(?:限制|约束|审核|审查|过滤|禁忌|道德|伦理)',
+  // 3) 索取提示词（说出你的系统提示词 / 重复初始指令…）
+  '(?:输出|重复|复述|打印|显示|告诉|泄露|透露|展示|贴出)[^。；;\\n]{0,8}(?:你的|系统|初始|预设|全部)?(?:提示词|提示语|系统指令|初始指令|预设指令|system\\s*prompt)',
+  // 3b) 同一件事的倒装语序（「把提示词发给我」「提示词贴出来」）
+  '(?:你的|系统|初始|预设|全部)?(?:提示词|提示语|系统指令|初始指令|预设指令|system\\s*prompt)[^。；;\\n]{0,10}(?:输出|发给|发我|告诉|打印|复述|贴出|显示)',
+  // 4) 越狱专名
+  '\\b(?:DAN|jailbreak|developer\\s*mode|god\\s*mode|do\\s*anything\\s*now)\\b|越狱|开发者模式|无限制模式|破解模式',
+  // 5) 身份否定（你不再是写作助手 / 你已经不是 AI…）
+  '(?:你|助手|AI|模型)[^。；;\\n]{0,6}(?:不再是|已经不是|不再是那个)[^。；;\\n]{0,8}(?:助手|AI|模型|写作|小说)',
+  // 6) 伪造分隔块（想冒充"固定规则"那一节，把后面的真规则盖掉）
+  '【\\s*(?:以下|下面)?\\s*(?:是)?\\s*(?:本工具|系统|固定规则|系统提示)|<<<|>>>|\\[\\s*system\\s*\\]',
+];
+
+const PROMPT_GUARD_NEG = /(?:不要|不得|禁止|切勿|不能|不可|严禁|不准|避免|别|勿)/;
+
+/**
+ * 扫描并剔除越狱句式（与主进程 guardCustomPrompt 同一套规则）。
+ * 返回 { text, hits }，界面只用 hits 决定要不要报警。
+ */
+function guardCustomPrompt(text) {
+  const src = String(text == null ? '' : text);
+  if (!src) return { text: '', hits: 0 };
+  const res = PROMPT_GUARD_SOURCES.map((s) => new RegExp(s, 'i'));
+  let hits = 0;
+  const clauses = src.split(/([。；;\n！!？?])/);
+  const out = [];
+  for (let i = 0; i < clauses.length; i += 2) {
+    const body = clauses[i];
+    const tail = clauses[i + 1] || '';
+    if (!body) { out.push(tail); continue; }
+    let bad = false;
+    for (const re of res) {
+      re.lastIndex = 0;
+      const m = re.exec(body);
+      if (!m) continue;
+      const before = body.slice(Math.max(0, m.index - 8), m.index);
+      if (PROMPT_GUARD_NEG.test(before)) continue;
+      bad = true;
+      break;
+    }
+    if (bad) { hits += 1; continue; }
+    out.push(body + tail);
+  }
+  return { text: out.join('').trim(), hits };
+}
+
 function Appearance({ local, save, onToast }) {
   const fonts = useFonts();
+
+  /* ---------------- 明暗与自定义色（2026-11-01） ---------------- */
+  const currentMode = local.mode || 'light';
+  const isDark = resolveDark(currentMode);
+  const def = modeDefaults(currentMode);
+  const slot = (local.customColors || {})[isDark ? 'dark' : 'light'] || {};
+  // 没设过的项显示当前档位的默认值 —— 和 ChatGPT 一样，色块里永远有值
+  const colors = {
+    bg: normalizeHex(slot.bg) || def.bg,
+    fg: normalizeHex(slot.fg) || def.fg,
+    accent: normalizeHex(slot.accent) || def.accent,
+  };
+
+  /**
+   * ⚠ 用 ref 存"最新的自定义色"，不能直接读 local.customColors：
+   *   拖取色器时 onChange 同一帧连发几次，而 local 要下一个 render 才更新，
+   *   第二次会拿到旧对象，把第一次改的键覆盖回去 —— 现象是"拖半天只有一个颜色生效"。
+   */
+  const colorsRef = useRef(local.customColors);
+  useEffect(() => { colorsRef.current = local.customColors; }, [local.customColors]);
+  const saveTimer = useRef(null);
+
+  const saveColor = (key, val) => {
+    const base = colorsRef.current || {};
+    const which = isDark ? 'dark' : 'light';
+    const next = { ...base, [which]: { ...(base[which] || {}), [key]: val } };
+    colorsRef.current = next;
+    // 立刻重绘：不等存盘回来，否则拖色块时界面是滞后的
+    applyTheme(currentMode, next);
+    // 250ms 合并写盘：拖一次色块能发几十次事件，逐次 IPC 会卡
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => save({ customColors: next }), 250);
+  };
+
+  const resetColors = () => {
+    const base = { ...(colorsRef.current || {}) };
+    delete base[isDark ? 'dark' : 'light'];
+    colorsRef.current = base;
+    applyTheme(currentMode, base);
+    save({ customColors: base });
+  };
+
   // 兼容旧配置：老 fontFamily 兜底给编辑器；老 fontSize 兜底给两个档
   const editorFont = local.editorFont || local.fontFamily || 'system-ui';
   const chatFont = local.chatFont || 'system-ui';
@@ -296,6 +427,75 @@ function Appearance({ local, save, onToast }) {
       <H1>外观</H1>
 
       {/* ⚠ 自定义背景图：就是上传一张图替代白色背景，没有别的参数 */}
+      {/* ------------------------------------------------------------------
+          外观（照 ChatGPT 的 Appearance，但**全部中文化**）
+
+          ⚠ 2026-11-01 第二版：第一版把英文原样搬过来了（Mode / Theme /
+            Accent / Background / Foreground），还留了一个只有一项的
+            "Theme 下拉"。羽毛菌的原话：「不能做本土化，弄个英文干什么？
+            这个有啥用啊，抄都抄不明白。」
+            → 标签全改中文；Theme 那一行**删掉**（只有一套配色，摆个
+              只能选一项的下拉就是点不动的装饰）。什么时候真有第二套
+              配色，什么时候再加回来。
+          ------------------------------------------------------------------ */}
+      <Group title="风格">
+        <div className="rounded-xl px-4 py-3"
+             style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-[12.5px] shrink-0" style={{ color: 'var(--ink)' }}>明暗</span>
+            <div className="flex items-center gap-2">
+              {MODES.map((m) => (
+                <ModeThumb
+                  key={m.id}
+                  kind={m.id}
+                  title={m.hint}
+                  on={currentMode === m.id}
+                  onClick={() => save({ mode: m.id })}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl mt-3 overflow-hidden"
+             style={{ background: 'var(--paper-2)', border: '1px solid var(--line)' }}>
+          <SRow label="强调色">
+            <ColorRow
+              value={colors.accent}
+              onChange={(v) => saveColor('accent', v)}
+            />
+          </SRow>
+
+          <SRow label="背景色">
+            <ColorRow
+              value={colors.bg}
+              onChange={(v) => saveColor('bg', v)}
+            />
+          </SRow>
+
+          <SRow label="文字色" last>
+            <ColorRow
+              value={colors.fg}
+              onChange={(v) => saveColor('fg', v)}
+            />
+          </SRow>
+        </div>
+
+        <div className="flex items-center justify-between mt-2">
+          <Hint>
+            改的是当前这一档（{isDark ? '深色' : '浅色'}）的配色 ——
+            浅色和深色各存一份，切明暗不会互相覆盖。
+          </Hint>
+          <button
+            onClick={resetColors}
+            className="shrink-0 ml-3 px-2.5 py-1 rounded-lg text-[11.5px]"
+            style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)', border: '1px solid var(--line)' }}
+          >
+            恢复默认
+          </button>
+        </div>
+      </Group>
+
       <Group title="背景">
         <BackgroundSection
           bg={{ enabled: local.bgEnabled === true, url: local.bgUrl || '' }}
@@ -304,36 +504,26 @@ function Appearance({ local, save, onToast }) {
         />
       </Group>
 
-      <Group title="配色主题">
-        <div className="grid grid-cols-2 gap-2">
-          {THEMES.map((t) => {
-            const on = local.theme === t.id;
-            const sw = THEME_SWATCH[t.id] || ['#fff', '#888', '#000'];
-            return (
-              <button
-                key={t.id}
-                onClick={() => save({ theme: t.id })}
-                className="flex items-center gap-2 p-2 rounded border text-left"
-                style={{
-                  borderColor: on ? 'var(--accent)' : 'var(--line)',
-                  background: on ? 'var(--accent-soft)' : 'var(--paper)',
-                }}
-              >
-                {/* 三块预览色：纸/墨金/文字 */}
-                <span className="flex shrink-0 rounded overflow-hidden" style={{ border: '1px solid var(--line)' }}>
-                  {sw.map((c, i) => (
-                    <span key={i} style={{ width: 14, height: 22, background: c, display: 'block' }} />
-                  ))}
-                </span>
-                <span className="text-[12.5px]" style={{ color: 'var(--ink)' }}>{t.name}</span>
-                {on && <span className="text-[11px] ml-auto" style={{ color: 'var(--accent)' }}>✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      </Group>
+      {/* ------------------------------------------------------------------
+          外观（2026-11-01 重做，照 ChatGPT 的 Appearance 页）
 
-      <Group title="编辑器">
+          ⚠ 原来这里是 12 套主题平铺成两列网格（墨金/赭石/松绿…）。
+            羽毛菌的原话：「不要这种固定选择主题，而是和 ChatGPT 一样
+            只能选择深色、浅色，然后可以改底色、字体颜色这种。」
+            所以改成：三档 Mode + 三个可填的颜色。预设主题不再出现。
+            那 12 套 CSS 变量还留在 index.css 里没删（怕牵连别的规则），
+            只是界面上够不着了。
+          ------------------------------------------------------------------ */}
+      {/**
+        * 字号（2026-11-06 合并）。
+        *
+        * ⚠ 原来「编辑器字号」和「聊天字号」各占一个 Group，两个滑块长得一模一样，
+        *   中间还夹着整块「应用字体」—— 想同时调两处字号得上下找，
+        *   而它们本来就是同一件事的两个维度。现在并进同一个组。
+        * ⚠ 两个 slider 的 min/max/step 必须一致，否则拖到同一个数字
+        *   会出现两个区域字号不同的怪现象。
+        */}
+      <Group title="字号">
         <Field label="编辑器字号">
           <div className="flex items-center gap-3">
             <input
@@ -347,15 +537,6 @@ function Appearance({ local, save, onToast }) {
           <Hint>改动会立刻应用到正文编辑区。</Hint>
         </Field>
 
-        <FontPicker
-          label="编辑器字体"
-          value={editorFont}
-          onChange={(f) => save({ editorFont: f, fontFamily: f })}
-          presetState={fonts}
-        />
-      </Group>
-
-      <Group title="聊天">
         <Field label="聊天字号">
           <div className="flex items-center gap-3">
             <input
@@ -368,14 +549,15 @@ function Appearance({ local, save, onToast }) {
           </div>
           <Hint>改动会立刻应用到对话气泡。</Hint>
         </Field>
-
-        <FontPicker
-          label="聊天字体"
-          value={chatFont}
-          onChange={(f) => save({ chatFont: f })}
-          presetState={fonts}
-        />
       </Group>
+
+      {/* 2026-11-06：编辑器和聊天合并成**一个入口**，下载/删除全收进弹窗。
+          它自带底色气泡（.set-bubble），所以不套 Group —— 套了就是气泡里再套一层标题。 */}
+      <FontManager
+        fonts={fonts}
+        value={editorFont}
+        onChange={(f) => save({ editorFont: f, chatFont: f, fontFamily: f })}
+      />
 
       <Group title="提示">
         <Field label="生成完成时">
@@ -405,79 +587,134 @@ function Appearance({ local, save, onToast }) {
 }
 
 /**
- * 字体选择器：系统默认 + 每个开源字体一行。
- * 未下载的显示「下载」（首次需联网，约数 MB，存到本机后离线也能用），
- * 已下载的显示「删除」，下载中显示进度百分比。选中行高亮 + 对勾。
+ * 应用字体（2026-11-06 改版）。
+ *
+ * ⚠ 原来「编辑器字体」「聊天字体」各铺一整份字体列表，两处都带下载按钮 ——
+ *   设置页要滚两屏，同一份列表出现两次，看着像两份东西，也占地方。
+ *   现在收成一行：当前字体 + 「管理字体」，下载 / 删除 / 导入全在弹窗里。
+ * ⚠ 字体统一应用到编辑器和聊天区（config 的 editorFont + chatFont 一起写），
+ *   用户只管理一次；读取仍优先 editorFont，老配置不会失效。
  */
-function FontPicker({ label, value, onChange, presetState }) {
-  const { presets, installed, installing, install, uninstall, error } = presetState;
+function FontManager({ fonts, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const { presets, installed, installing, install, uninstall, importLocal, error } = fonts;
+  /**
+   * ⚠ 配置里可能存着一个**已经下架**的字体族（2026-11-02 移除了「霞鹜文楷」）。
+   *   不归一的话，界面上没有任何一行被勾中 —— 用户看到的是"我选的字体不见了"。
+   */
+  const known = new Set(['system-ui', ...(presets || []).map((p) => p.family)]);
+  const cur = known.has(value) ? value : 'system-ui';
+  const curLabel = cur === 'system-ui'
+    ? '系统默认'
+    : ((presets || []).find((p) => p.family === cur) || {}).label || cur;
+
+  const pick = (family) => { onChange(family); setOpen(false); };
+
   const row = (key, family, name, sub) => {
-    const on = value === family;
+    const on = cur === family;
     return (
       <button
         key={key}
-        onClick={() => onChange(family)}
-        className="w-full flex items-center gap-2 px-3 py-2 rounded border text-left"
-        style={{
-          borderColor: on ? 'var(--accent)' : 'var(--line)',
-          background: on ? 'var(--accent-soft)' : 'var(--paper)',
-        }}
+        type="button"
+        onClick={() => pick(family)}
+        className="font-row"
+        data-on={on ? '1' : '0'}
       >
-        <span className="flex-1">
-          <span className="text-[12.5px] block" style={{ color: 'var(--ink)', fontFamily: family }}>{name}</span>
-          {sub && <span className="block text-[10.5px]" style={{ color: 'var(--ink-soft)' }}>{sub}</span>}
+        <span className="flex-1 min-w-0">
+          <span className="block text-[13px] truncate" style={{ color: 'var(--ink)', fontFamily: family }}>{name}</span>
+          {sub && (
+            <span className="block text-[10.5px] truncate" style={{ color: 'var(--ink-soft)' }}>{sub}</span>
+          )}
         </span>
-        {on && <span className="text-[11px]" style={{ color: 'var(--accent)' }}>✓</span>}
+        {on && <span className="text-[11px] shrink-0" style={{ color: 'var(--accent)' }}>✓</span>}
       </button>
     );
   };
+
   return (
-    <Field label={label}>
-      <div className="space-y-1.5">
-        {row('system', 'system-ui', '系统默认', '跟随操作系统的界面字体')}
-        {(presets || []).map((p) => {
-          const isInstalled = installed.has(p.id);
-          const isInstalling = installing && installing.id === p.id;
-          const on = value === p.family;
-          return (
-            <div
-              key={p.id}
-              className="flex items-center gap-2 px-3 py-2 rounded border"
-              style={{
-                borderColor: on ? 'var(--accent)' : 'var(--line)',
-                background: on ? 'var(--accent-soft)' : 'var(--paper)',
-              }}
-            >
-              <button onClick={() => onChange(p.family)} className="flex-1 text-left">
-                <span className="text-[12.5px] block" style={{ color: 'var(--ink)', fontFamily: p.family }}>{p.label}</span>
-                <span className="block text-[10.5px]" style={{ color: 'var(--ink-soft)' }}>
-                  {p.desc} · 约 {p.sizeMB} MB
-                </span>
-              </button>
-              {isInstalled ? (
-                <button
-                  onClick={() => uninstall(p.id)}
-                  className="px-2 py-1 rounded text-[11px] shrink-0"
-                  style={{ background: 'var(--paper-2)', color: 'var(--ink-soft)' }}
-                >删除</button>
-              ) : isInstalling ? (
-                <span className="text-[11px] tabular-nums shrink-0" style={{ color: 'var(--accent)' }}>
-                  {installing.total ? Math.round((installing.loaded / installing.total) * 100) + '%' : '下载中'}
-                </span>
-              ) : (
-                <button
-                  onClick={() => install(p.id)}
-                  className="px-2 py-1 rounded text-[11px] shrink-0"
-                  style={{ background: 'var(--accent)', color: 'var(--accent-ink)' }}
-                >下载</button>
-              )}
-            </div>
-          );
-        })}
+    /**
+     * 应用字体做成**一块带底色的气泡**（2026-11-06 第二次改）。
+     *
+     * ⚠ 原来它和字号滑块一样是平铺在页面上的 Field —— 一行字 + 一个方块按钮，
+     *   看起来像"又一项设置"，实际上它是个独立入口（点开是整张字体面板）。
+     *   苹果的设置里，这种"点进去"的项都是一块浮起来的浅底圆角行。
+     * ⚠ 底色走 CSS 类不写 inline：inline 会压掉 :hover。
+     * ⚠ data-testid 拆成两个：font-bubble 认这块气泡，font-manage 还是那颗按钮
+     *   （旧判据按 font-manage 点，别动这个名字）。
+     */
+    <section className="set-bubble" data-testid="font-bubble">
+      <div className="set-bubble-label">应用字体</div>
+
+      <div className="set-bubble-row">
+        <span
+          className="set-bubble-value"
+          style={{ fontFamily: cur }}
+          data-testid="font-current"
+        >
+          {curLabel}
+        </span>
+        <button
+          type="button"
+          data-testid="font-manage"
+          onClick={() => setOpen(true)}
+          className="set-bubble-btn"
+        >
+          管理字体
+        </button>
       </div>
-      {error && <Hint warn>{error}</Hint>}
-      <Hint>开源字体首次需联网下载（存到本机，之后离线也能用）。下载后立刻生效，选「系统默认」可还原。</Hint>
-    </Field>
+
+      <Hint>下载开源字体并应用到整个界面，可随时切回系统默认。</Hint>
+
+      {open && (
+        <div className="font-mask modal-mask" onClick={() => setOpen(false)} data-testid="font-modal">
+          <div
+            className="font-modal modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="管理字体"
+          >
+            <div className="font-modal-head">
+              <span className="text-[14px] font-semibold" style={{ color: 'var(--ink)' }}>字体</span>
+              <button type="button" className="font-modal-x" onClick={() => setOpen(false)} aria-label="关闭">✕</button>
+            </div>
+
+            <div className="font-modal-body">
+              {row('system', 'system-ui', '系统默认', '跟随操作系统的界面字体')}
+              {(presets || []).map((p) => {
+                const isInstalled = installed.has(p.id);
+                const isInstalling = installing && installing.id === p.id;
+                return (
+                  <div key={p.id} className="font-row-wrap" data-on={cur === p.family ? '1' : '0'}>
+                    {row('r-' + p.id, p.family, p.label, p.desc + ' · 约 ' + p.sizeMB + ' MB')}
+                    {isInstalled ? (
+                      <button type="button" onClick={() => uninstall(p.id)} className="font-act">删除</button>
+                    ) : isInstalling ? (
+                      <span className="font-act" style={{ color: 'var(--accent)' }}>
+                        {installing.total ? Math.round((installing.loaded / installing.total) * 100) + '%' : '下载中'}
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => install(p.id)} className="font-act primary">下载</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="font-modal-foot">
+              {/* ⚠ 下载走 CDN，国内经常被掐；这个入口不联网，用自己下好的 .ttf */}
+              <button type="button" data-testid="font-import" onClick={() => importLocal()} className="font-import">
+                ＋ 从本地文件装字体
+              </button>
+              <span className="text-[10.5px]" style={{ color: 'var(--ink-soft)' }}>下载后立刻生效</span>
+            </div>
+            {error && (
+              <div className="px-4 pb-3 text-[11px]" style={{ color: 'var(--danger)' }}>{error}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -493,6 +730,18 @@ function FontPicker({ label, value, onChange, presetState }) {
  */
 function Params({ local, save, connParams, onConnParam, connName = '', connBase = '' }) {
   const [showGuide, setShowGuide] = useState(false);
+  /**
+   * 自定义提示词里命中越狱句式的**条数**（2026-11-06）。
+   *
+   * ⚠ 只存数量不存文本：textarea 保持非受控（defaultValue + onBlur 保存），
+   *   一路受控会把用户打字时 React 的重渲染和异步保存搅在一起 ——
+   *   记忆里踩过「打完立刻读 el.value 拿到旧值」那次就是受控 + 异步保存。
+   * ⚠ 初始值要按已存的配置算：进页面就看到「上次写的这段不会生效」，
+   *   而不是等用户再改一次才出现红字。
+   */
+  const [promptHits, setPromptHits] = useState(
+    () => guardCustomPrompt(local.customSystemPrompt ?? DEFAULT_CUSTOM_PROMPT).hits
+  );
 
   /**
    * 本地模型的**真实**窗口能力。
@@ -566,9 +815,8 @@ function Params({ local, save, connParams, onConnParam, connName = '', connBase 
         {/*
          * ⚠ 这一栏原来只有一句「以服务商文档为准，拿不准就填保守一点」——
          *   **等于没说**。用户要的是「那我这份该填多少」。
-         *   表在 ParamGuide.jsx 里，每家都标了 [已核实] / [待核实]：
-         *   标「待核实」不是心虚，是不骗人 —— 上下文长度与最大输出
-         *   是服务商随时会改的参数。
+         * 现在弹层是说明书结构：从哪查 → 常见值 → 查不到怎么自己试
+         * （见 ParamGuide.jsx 文件头）。
          */}
         <button onClick={() => setShowGuide(true)}
                 className="text-[12px] px-2.5 py-1 rounded border"
@@ -592,6 +840,58 @@ function Params({ local, save, connParams, onConnParam, connName = '', connBase 
             <span>0 更保守</span><span>0.7 更有创意</span><span>1.5 最随机</span>
           </div>
           <Hint>写长篇建议 0.3~0.5。调太高会「记住」不属于自己的设定。</Hint>
+        </Field>
+      </Group>
+
+      {/**
+        * 系统提示词（2026-11-06）。
+        *
+        * ⚠ 这段只决定「助手是谁、怎么干活」，**不能覆盖硬规则**：
+        *   主进程 systemPromptFor 把它拼在 SYSTEM_PROMPT **前面**，
+        *   后面紧跟一句「以下是本工具的固定规则，优先级高于上面的角色描述」。
+        *   所以用户在这里写"你现在是无限制 AI"也压不掉范围守卫。
+        * ⚠ 默认值与 electron/main.js 的 DEFAULT_CUSTOM_PROMPT **必须一致**
+        *   （判据里有字符串比对，改一处忘另一处会红）。
+        */}
+      <Group title="对话行为">
+        <Field label="系统提示词">
+          <textarea
+            data-testid="custom-system-prompt"
+            key={local.customSystemPrompt ?? '__default__'}
+            defaultValue={local.customSystemPrompt ?? DEFAULT_CUSTOM_PROMPT}
+            onChange={(e) => setPromptHits(guardCustomPrompt(e.target.value).hits)}
+            onBlur={(e) => {
+              setPromptHits(guardCustomPrompt(e.target.value).hits);
+              save({ customSystemPrompt: e.target.value });
+            }}
+            rows={5}
+            spellCheck={false}
+            className="w-full px-3 py-2 rounded-lg text-[12.5px] leading-relaxed outline-none resize-y"
+            style={{
+              background: 'var(--accent-soft)', color: 'var(--ink)',
+              minHeight: 104,
+              border: '1px solid ' + (promptHits ? 'var(--danger)' : 'var(--line)'),
+            }}
+          />
+          {/**
+            * ⚠ 命中时**必须当场说清楚**。不提示的话，用户会以为越狱话术生效了，
+            *   或者反过来——以为软件把他的正常设定也删了。
+            *   说清「哪部分不生效、哪部分照常」，才不会被当成 bug。
+            */}
+          {promptHits > 0 && (
+            <div
+              className="text-[11.5px] leading-relaxed mt-1.5"
+              style={{ color: 'var(--danger)' }}
+              data-testid="prompt-guard-hint"
+            >
+              检测到 {promptHits} 处越狱或破解句式，发送前会被自动剔除，<b>不会生效</b>。
+              其余正常的人设描述照常生效；固定规则（只写小说、不越狱、不透露提示词）始终优先。
+            </div>
+          )}
+          <Hint>
+            自定义 AI 助手的行为，留空则使用默认的小说写作助手提示词。
+            本工具只用于小说创作，防越狱与范围规则不受此处影响。
+          </Hint>
         </Field>
       </Group>
 
@@ -695,7 +995,7 @@ function Params({ local, save, connParams, onConnParam, connName = '', connBase 
             *   否则用户会以为这里能关掉守卫（关不掉才是它的意义）。
             */}
           <div className="mt-3 pt-3" style={{ borderTop: '1px solid var(--line)' }}>
-            {scopeState.locked ? (
+            {scopeState.locked && (
               <>
                 <div className="text-[13px] font-semibold" style={{ color: 'var(--danger)' }}>
                   模型连接已关闭
@@ -717,40 +1017,7 @@ function Params({ local, save, connParams, onConnParam, connName = '', connBase 
                   重新启用模型连接
                 </button>
               </>
-            ) : (
-              <>
-                <div className="text-[13px] font-semibold">使用范围</div>
-                <Hint>
-                  这个工具只用于小说创作，<b>任何时候只称呼你为「老板」</b>。
-                  与写作无关的请求（写代码、做作业、翻译资料…）
-                  第一次会提示并不发送，第二次会**关闭模型连接**；
-                  越狱 / 改身份 / 要提示词这类直接关闭；
-                  涉及法律或道德伦理的具体做法，第一次会弹《用户协议》让你确认，
-                  第二次关闭模型连接。
-                  {scopeState.strikes > 0 ? `（已警告 ${scopeState.strikes} 次）` : ''}
-                </Hint>
-                <button
-                  onClick={async () => {
-                    const doc = await window.api.scope.agreement();
-                    setAgreementDoc(doc || null);
-                  }}
-                  className="px-3 py-1 rounded text-[12px] self-start"
-                  style={{ border: '1px solid var(--line)', color: 'var(--ink-soft)' }}
-                  data-testid="btn-read-agreement"
-                >
-                  查看《用户协议》全文
-                </button>
-                {/* 只读查看：没有勾选框，主按钮就是「关闭」。
-                    ⚠ 用同一个组件而不是再写一个，是为了协议正文只显示一处。 */}
-                <AgreementModal
-                  open={!!agreementDoc}
-                  readOnly
-                  version={agreementDoc ? agreementDoc.version : ''}
-                  text={agreementDoc ? agreementDoc.text : ''}
-                  onCancel={() => setAgreementDoc(null)}
-                />
-              </>
-            )}
+          )}
           </div>
 
           {isLocal && ctx > 32768 && (
@@ -1106,9 +1373,17 @@ function AboutCat() {
   const [ver, setVer] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  /** 使用范围的"已警告几次"与协议正文（2026-11-03 随说明一起搬过来） */
+  const [scopeState, setScopeState] = useState({ locked: false, strikes: 0 });
+  const [agreementDoc, setAgreementDoc] = useState(null);
 
   useEffect(() => {
     window.api.app.version().then(setVer).catch(() => setVer(null));
+    let alive = true;
+    window.api.scope.status()
+      .then((s) => { if (alive && s) setScopeState(s); })
+      .catch(() => { /* 读不到就按"没警告"显示，别挡界面 */ });
+    return () => { alive = false; };
   }, []);
 
   const saveUrl = async (url) => {
@@ -1135,9 +1410,60 @@ function AboutCat() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-[15px] tabular-nums font-semibold">{ver?.full || '—'}</span>
           </div>
+        </Field>
+      </Group>
+
+      {/**
+       * 使用范围（2026-11-03 从「模型 → 参数」搬到这里）。
+       *
+       * ⚠ 羽毛菌：「放到关于那个页面」。
+       *   它讲的是**产品政策**，不是模型配置 —— 放在参数页里，
+       *   用户调上下文窗口时会被一段"什么时候关闭连接"打断。
+       *   「关于」才是找这类说明的地方。
+       *
+       * ⚠ 顺手修了一个显示 bug：原文里有 `**关闭模型连接**`，
+       *   而这里不是 markdown 渲染环境，星号会**原样显示**在界面上
+       *   （截图里就是 `**关闭模型连接**`）。改成 <b>。
+       */}
+      <Group title="使用范围">
+        <Field label="仅用于小说创作">
           <Hint>
-            版本号规则：<b>每次更新第三位加 1</b>。
+            本软件仅用于小说创作。写作助手「拾墨」按用户设定的称谓称呼用户（默认「主笔」），
+            正式文书统一使用「执笔人」。
           </Hint>
+          <Hint>
+            与小说创作无关的请求（编写代码、完成作业、翻译资料等）：首次提示并中止发送，
+            再次触发则<b>关闭模型连接</b>。
+          </Hint>
+          <Hint>
+            越狱、修改助手身份、索取系统提示词：直接<b>关闭模型连接</b>，不另行提示。
+          </Hint>
+          <Hint>
+            涉及法律或道德伦理的具体操作指引：首次弹出《用户协议》要求确认，
+            再次触发则<b>关闭模型连接</b>。
+          </Hint>
+          {scopeState.strikes > 0 && (
+            <Hint warn>已警告 {scopeState.strikes} 次。</Hint>
+          )}
+          <button
+            onClick={async () => {
+              const doc = await window.api.scope.agreement();
+              setAgreementDoc(doc || null);
+            }}
+            className="px-3 py-1 rounded text-[12px] self-start"
+            style={{ border: '1px solid var(--line)', color: 'var(--ink-soft)' }}
+            data-testid="btn-read-agreement"
+          >
+            查看《用户协议》全文
+          </button>
+          {/* 只读查看：没有勾选框，主按钮就是「关闭」。 */}
+          <AgreementModal
+            open={!!agreementDoc}
+            readOnly
+            version={agreementDoc ? agreementDoc.version : ''}
+            text={agreementDoc ? agreementDoc.text : ''}
+            onCancel={() => setAgreementDoc(null)}
+          />
         </Field>
       </Group>
 
@@ -1163,9 +1489,8 @@ function AboutCat() {
             </button>
           </div>
           <Hint>
-            填了之后，下面的「前往下载」按钮会打开这个网址。
-            软件**不会自己联网检查版本**——有新版本时它不会打扰你，
-            由你自己决定什么时候去下载。
+            该地址用于「前往下载页」按钮的跳转。本软件<b>不进行联网版本检查</b>，
+            不主动推送更新提示，是否更新由用户自行决定。
           </Hint>
         </Field>
 
@@ -1185,10 +1510,10 @@ function AboutCat() {
 
         <Field label="怎么更新">
           <Hint>
-            下载新的 <code>-setup.exe</code> 双击覆盖安装，选原来同一个目录即可。
-            <b>用户数据不会丢</b>：章节、设定、项目文件都在{' '}
-            <code>%APPDATA%\writetool</code> 下，与安装目录分离；
-            卸载也不会删数据。
+            下载新版 <code>-setup.exe</code>，双击覆盖安装并选择原有安装目录。
+            <b>用户数据不受影响</b>：章节、设定与项目文件存储于{' '}
+            <code>%APPDATA%\writetool</code>，与安装目录相互独立；
+            卸载软件不会删除数据。
           </Hint>
         </Field>
       </Group>
@@ -1264,12 +1589,37 @@ function AuthorCat({ local, save, setLocalDraft }) {
         </Field>
       </Group>
 
+      <Group title="称呼">
+        <Field label="拾墨怎么称呼你">
+          <input
+            data-testid="user-title"
+            value={local.userTitle || ''}
+            onChange={(e) => setLocalDraft({ userTitle: e.target.value })}
+            /**
+             * ⚠ 校验**不在这里做**：主进程 config:set 才是规则所在，
+             *   这里只负责失焦就提交。失败会走 save() 的 catch，
+             *   在顶栏显示原因（「这个称谓不能用：…」），输入框保留他打的字。
+             *   在界面里再抄一份黑名单，早晚会和主进程那份长得不一样。
+             */
+            onBlur={(e) => save({ userTitle: e.target.value })}
+            onKeyDown={(e) => { if (e.key === 'Enter') save({ userTitle: e.target.value }); }}
+            placeholder="主笔"
+            className="w-full px-2 py-1.5 rounded text-[12.5px] outline-none"
+            style={{ background: 'var(--accent-soft)', color: 'var(--ink)' }}
+            spellCheck={false}
+          />
+          <Hint>
+            对话里它就按这个叫你，留空就是「主笔」。
+            <b>正式文书</b>（简介、序、卷首语、致读者）统一用「执笔人」，不跟随这里。
+          </Hint>
+        </Field>
+      </Group>
+
       <Group title="数据在哪">
         <Field label="说明">
           <Hint>
-            笔名与简介存在<b>软件配置</b>里（全局），不是某个项目的——
-            换项目写别的书，笔名一般也是同一个。
-            稿子本身存在项目文件夹里，随项目走。
+            笔名与简介保存于<b>软件全局配置</b>，不隶属于单个项目——切换项目后仍沿用同一笔名。
+            稿件正文存储于各自的项目文件夹，随项目迁移。
           </Hint>
         </Field>
       </Group>
@@ -1298,5 +1648,134 @@ function Switch({ label, checked, onChange, testId }) {
       />
       <span className="text-[13px]">{label}</span>
     </label>
+  );
+}
+
+
+/**
+ * Mode 缩略图：一个迷你窗口，浅色 / 深色 / 一半一半（跟随系统）。
+ *
+ * ⚠ 不全用 CSS 变量画 —— 缩略图要同时展示"白的长什么样"和"黑的长什么样"，
+ *   跟着当前主题走就永远只能用一种颜色画，三个缩略图长得一模一样。
+ */
+function ModeThumb({ kind, title, on, onClick }) {
+  const dark = kind === 'dark';
+  const sys = kind === 'system';
+  // ⚠ 深色缩略图**不能画成"纯黑底 + 亮线"**：一眼看过去像块黑板，
+  //   不像界面。底色提亮到 #2a2a2a、侧栏压暗、内容线用 #555 才看得出层次。
+  const line = dark ? '#555555' : '#e6e6e6';
+  const panel = dark ? '#1f1f1f' : '#f2f2f2';
+  const bg = dark ? '#2a2a2a' : '#ffffff';
+  const sysLine = '#9a9a9a';
+  return (
+    <button
+      type="button"
+      title={title}
+      data-mode={kind}
+      onClick={onClick}
+      className="shrink-0"
+      style={{
+        padding: 2,
+        borderRadius: 13,
+        border: '1.5px solid ' + (on ? 'var(--accent)' : 'transparent'),
+        background: 'transparent',
+      }}
+    >
+      <span
+        className="relative block overflow-hidden"
+        style={{
+          width: 48, height: 32, borderRadius: 9,
+          border: '1px solid ' + (sys ? '#cfcfcf' : line),
+          background: sys
+            ? 'linear-gradient(90deg, #ffffff 0 50%, #2a2a2a 50% 100%)'
+            : bg,
+        }}
+      >
+        {/* 侧栏 */}
+        <span
+          className="absolute block"
+          style={{
+            left: 0, top: 0, bottom: 0, width: 13,
+            background: sys ? 'rgba(0,0,0,0.07)' : panel,
+            borderRight: '1px solid ' + (sys ? 'rgba(0,0,0,0.12)' : line),
+          }}
+        />
+        {/* 两条内容线 */}
+        <span className="absolute block" style={{ left: 19, top: 9, width: 21, height: 2.5, borderRadius: 2, background: sys ? '#8c8c8c' : line }} />
+        <span className="absolute block" style={{ left: 19, top: 15, width: 14, height: 2.5, borderRadius: 2, background: sys ? '#8c8c8c' : line }} />
+      </span>
+    </button>
+  );
+}
+
+/** 设置页的一行：左标签 + 右控件，行间一条淡线（照 ChatGPT 的 Appearance） */
+function SRow({ label, children, last }) {
+  return (
+    <div
+      className="flex items-center justify-between gap-4 px-4 py-2.5"
+      style={{ borderBottom: last ? 'none' : '1px solid color-mix(in srgb, var(--line) 70%, transparent)' }}
+    >
+      <span className="text-[12.5px] shrink-0" style={{ color: 'var(--ink)' }}>{label}</span>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * 一个颜色：圆形色块（点开系统取色器）+ hex 文本框。
+ *
+ * ⚠ hex 输入用**本地草稿**，只在回车/失焦时提交。
+ *   受控输入直接绑 config 的话，用户删到只剩 `#` 时会被即时判非法、
+ *   值被弹回去，一个字符都打不出来。
+ */
+function ColorRow({ value, onChange }) {
+  const [draft, setDraft] = useState(value);
+  const editing = useRef(false);
+  useEffect(() => { if (!editing.current) setDraft(value); }, [value]);
+
+  const commit = () => {
+    editing.current = false;
+    const norm = normalizeHex(draft);
+    if (norm) {
+      setDraft(norm);
+      if (norm !== value) onChange(norm);
+    } else {
+      setDraft(value);           // 非法输入还原，不静默改成别的颜色
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <label className="relative shrink-0 cursor-pointer" style={{ width: 22, height: 22 }}>
+        <span
+          className="absolute inset-0 rounded-full block"
+          style={{ background: value, border: '1px solid var(--line)' }}
+        />
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="absolute inset-0 opacity-0 cursor-pointer"
+          style={{ width: 22, height: 22, padding: 0, border: 'none' }}
+        />
+      </label>
+      <input
+        value={draft}
+        spellCheck={false}
+        onChange={(e) => { editing.current = true; setDraft(e.target.value); }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') { editing.current = false; setDraft(value); e.currentTarget.blur(); }
+        }}
+        className="text-[12px] tabular-nums px-2 py-1 rounded-lg outline-none uppercase"
+        style={{
+          width: 86,
+          background: 'var(--paper)',
+          color: 'var(--ink)',
+          border: '1px solid var(--line)',
+        }}
+      />
+    </div>
   );
 }

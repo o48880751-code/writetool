@@ -55,6 +55,21 @@ function loadResedit() {
 }
 
 /**
+ * 用户看到的名字（2026-11-03 加）。
+ *
+ * ⚠⚠ 这里**不能**直接用 productName：`productName` 同时决定
+ *   `app.getPath('userData')` 的目录名和 exe 文件名（WriteTool.exe）。
+ *   把它改成「长卷」，老用户的配置和项目会"消失"（数据还在旧目录里，只是程序不看了）。
+ *
+ * 所以拆成两个名字：
+ *   · productName = WriteTool  → 目录 / 文件名 / 内部标识（**永不变**）
+ *   · displayName = 长卷        → 文件属性、任务管理器、控制面板里显示的名字
+ */
+function displayNameOf(pkg) {
+  return pkg.displayName || pkg.build?.productName || pkg.productName || 'WriteTool';
+}
+
+/**
  * 补全指定目录里 WriteTool.exe 的版本资源。
  * @param {string} dir 产物目录（含 WriteTool.exe）
  * @returns {{ok:boolean, exePath?:string, error?:string}}
@@ -74,6 +89,7 @@ function patchExe(dir) {
 
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
   const product = pkg.build?.productName || pkg.productName || 'WriteTool';
+  const display = displayNameOf(pkg);
   const desc = pkg.description || '本地长篇小说写作工具';
   const author = pkg.author || 'WriteTool';
   const copyright = pkg.copyright || `Copyright © ${new Date().getFullYear()} ${author}`;
@@ -83,10 +99,11 @@ function patchExe(dir) {
   const lang = { lang: 0x0409, codepage: 1200 };
 
   const values = {
-    FileDescription: `${product} — ${desc}`,
-    ProductName: product,
+    FileDescription: `${display} — ${desc}`,
+    ProductName: display,
     CompanyName: author,
     LegalCopyright: copyright,
+    // ⚠ 这两个必须还是真实文件名，改了会让某些校验工具认为 exe 被替换过
     InternalName: product,
     OriginalFilename: 'WriteTool.exe',
   };
@@ -120,12 +137,12 @@ function verifyExe(exePath) {
   const buf = fs.readFileSync(exePath);
   const has = (s) => buf.includes(Buffer.from(s, 'utf16le'));
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-  const product = pkg.build?.productName || pkg.productName || 'WriteTool';
+  const display = displayNameOf(pkg);
   return [
-    { label: '产品名', hit: has(product) },
+    { label: '产品名', hit: has(display) },
     { label: '中文描述', hit: has('本地长篇小说写作工具') },
     { label: '版本号', hit: has(pkg.version || '0.1.0') },
-    { label: '版权', hit: has(product) && has('Copyright') },
+    { label: '版权', hit: has(display) && has('Copyright') },
   ];
 }
 

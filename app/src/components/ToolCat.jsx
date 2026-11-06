@@ -142,17 +142,19 @@ export default function ToolCat({ config, onConfigChange, projectId, onToast }) 
           </div>
 
           <Hint>
-            打开后，模型可以在<b>当前项目文件夹</b>里执行命令、搜索与读取网页。
-            删除、格式化、安装这类命令<b>每次都会弹窗问你</b>，
-            不点「这一次允许」就不会执行。
+            开启后，模型可在<b>当前项目文件夹</b>内执行命令、联网搜索与读取网页。
+            删除、格式化、安装软件等命令会在执行前弹出确认框，
+            未选择「这一次允许」则不执行。
           </Hint>
 
-          {!enabled && (
-            <Hint warn>
-              默认关闭是有意的：模型能不能在你电脑上执行命令，
-              是一件该由你决定的事，不是装完软件就默认生效的。
-            </Hint>
-          )}
+          {/**
+           * ⚠ 这里原来还有一段「默认关闭是有意的：……不是装完软件就默认生效的」。
+           *   2026-11-03 羽毛菌：「这种话没必要」。
+           *
+           *   那段的毛病是**在向用户解释我的设计意图**，而不是说明功能。
+           *   用户不需要知道"我为什么默认关掉"，他只需要知道"现在是关的、
+           *   打开会发生什么"。上面那段已经把后果说清楚了，这段是冗余的自我说明。
+           */}
 
           {enabled && !projectId && (
             <Hint warn>
@@ -191,19 +193,23 @@ export default function ToolCat({ config, onConfigChange, projectId, onToast }) 
       </Group>
 
       <Group title="联网搜索">
-        <Field label="用哪家的搜索">
+        <Field label="搜索服务商">
           <div
             className="flex items-center gap-2 text-[12.5px] px-2.5 py-1.5 rounded"
             style={{ background: 'var(--accent-soft)', color: 'var(--ink)' }}
             data-testid="search-provider-fixed"
           >
             <b>Serper</b>
-            <span style={{ color: 'var(--ink-soft)' }}>serper.dev 注册就送免费额度</span>
+            <span style={{ color: 'var(--ink-soft)' }}>serper.dev 注册即送免费额度</span>
           </div>
-          <Hint>
-            只有这一家。以前还列过 Bing，微软已经关闭了新申请入口 ——
-            留着那个选项等于把用户引向一条走不通的路，所以删掉了。
-          </Hint>
+          {/**
+           * ⚠ 这里原来有一段「只有这一家。以前还列过 Bing，微软已经关闭了
+           *   新申请入口 —— 留着那个选项等于把用户引向一条走不通的路，所以删掉了」。
+           *   2026-11-03 羽毛菌：「这种话没必要」。
+           *
+           *   那是在解释**改动历史**（我删过什么、为什么删）。用户只想知道
+           *   "现在能填哪家" —— 上面那行已经答了。改动记录属于提交信息，不属于界面。
+           */}
         </Field>
 
         <Field label="Serper API Key">
@@ -310,18 +316,18 @@ export default function ToolCat({ config, onConfigChange, projectId, onToast }) 
       </Group>
 
       <Group title="危险命令">
-        <Field label="什么时候会问你">
+        <Field label="拦截范围">
           <Hint>
-            删除、格式化、覆盖文件、安装软件、动 git 历史这类命令会被拦下来，
-            弹窗给你看<b>完整命令原文</b>与它被拦的原因，由你决定。
+            以下类型的命令会在执行前被拦截：删除、格式化、覆盖文件、安装软件、修改 git 历史。
+            拦截时弹出确认框，显示<b>完整命令原文</b>与拦截原因。
+          </Hint>
+        </Field>
+        <Field label="确认方式">
+          <Hint>
+            每条命令单独确认，<b>不记录历史选择</b>。
           </Hint>
           <Hint>
-            <b>每一次都问</b>，不会记住你的选择。
-            代价是多点点几次；好处是你不用记得"上次我是不是同意过这个"。
-          </Hint>
-          <Hint>
-            弹窗上点<b>不允许</b>、按 <b>Esc</b>、关掉软件，
-            或者两分钟没响应 —— 四种情况都算拒绝。
+            以下四种情况均视为拒绝：点「不允许」、按 Esc、关闭软件、两分钟无响应。
           </Hint>
         </Field>
       </Group>

@@ -67,10 +67,19 @@ function RenderNode({ n }) {
           style={{
             fontSize: size,
             fontWeight: 700,
-            marginTop: n.level <= 2 ? 14 : 10,
-            marginBottom: 6,
-            paddingBottom: n.level <= 2 ? 4 : 0,
-            borderBottom: n.level <= 2 ? '1px solid var(--line)' : undefined,
+            /**
+             * 2026-11-02 苹果化：**不再给标题画下划线**。
+             *
+             * 原来是 h1/h2 一条 `border-bottom`（GitHub README 的做法，
+             * 为的是让一屏里有多个一级标题时能分开）。
+             *
+             * ⚠ 但这是**小说设定稿**：满篇 `## 一、天下` `## 二、大靖`，
+             *   一条标题一条线，读起来像表格 —— 用户连着问两次「这三条横线干什么的」。
+             * ⚠ 层级改由**字号 + 上间距**承担（上面 14px、下面 6px），
+             *   苹果的文档里从来不靠横线分节。
+             */
+            marginTop: n.level <= 2 ? 18 : 10,
+            marginBottom: 8,
             lineHeight: 1.35,
           }}
         >
@@ -430,23 +439,22 @@ export default function DocPreview({
         canSave={mode === 'edit'}
       />
 
-      {/* 文件小标签：多文档同时打开 */}
+      {/* 文件小标签：多文档同时打开
+         ⚠ 2026-11-02 苹果化：原来是「圆角上沿 + 1px 描边 + 容器 border-b」的
+           经典文件夹选项卡 —— 那是工业感最重的一种控件，且描边和缝线叠在一起。
+           苹果的标签（Safari / Xcode）是**无框色块**：选中的只是比背景深一档。 */}
       {files.length > 0 && (
-        <div
-          className="shrink-0 flex items-center gap-0.5 px-1.5 pt-1.5 border-b overflow-x-auto"
-          style={{ borderColor: 'var(--line)' }}
-        >
+        <div className="shrink-0 flex items-center gap-1 px-2 pt-2 pb-1 overflow-x-auto">
           {files.map((f) => {
             const on = f.path === activePath;
             return (
               <div
                 key={f.path}
-                className="flex items-center gap-1 px-2 py-1 rounded-t cursor-pointer shrink-0 text-[12px]"
+                className="doc-tab flex items-center gap-1 px-2.5 py-1 rounded-lg cursor-pointer shrink-0 text-[12px]"
                 style={{
-                  background: on ? 'var(--paper)' : 'var(--paper-2)',
-                  border: `1px solid var(--line)`,
-                  borderBottom: on ? 'none' : undefined,
+                  background: on ? 'color-mix(in srgb, var(--ink) 8%, transparent)' : 'transparent',
                   color: on ? 'var(--ink)' : 'var(--ink-soft)',
+                  fontWeight: on ? 600 : 400,
                 }}
                 onClick={() => onSelect(f.path)}
                 title={f.path}
@@ -454,7 +462,7 @@ export default function DocPreview({
                 <span className="truncate max-w-[120px]">{f.name}</span>
                 <span
                   onClick={(e) => { e.stopPropagation(); onClose(f.path); }}
-                  className="px-0.5 rounded hover:bg-[var(--accent-soft)]"
+                  className="doc-tab-x px-0.5 rounded"
                   style={{ fontSize: 11 }}
                   title="关闭"
                 >
@@ -466,12 +474,11 @@ export default function DocPreview({
         </div>
       )}
 
-      {/* 工具条 */}
+      {/* 工具条
+         ⚠ 2026-11-02 苹果化：去掉 border-b（一条横线把"头部"和"正文"切成两块），
+           改由 Tab 行的 pb-1 留白分隔。 */}
       {activePath && (
-        <div
-          className="shrink-0 flex items-center gap-2 px-2.5 py-1.5 border-b"
-          style={{ borderColor: 'var(--line)' }}
-        >
+        <div className="shrink-0 flex items-center gap-2 px-3 py-1.5">
           <span className="text-[11px] truncate flex-1" style={{ color: 'var(--ink-soft)' }} title={activePath}>
             {activePath}
           </span>
@@ -480,42 +487,57 @@ export default function DocPreview({
               {stat.chars} 字 · {stat.lines} 行
             </span>
           )}
-          <div className="flex gap-1 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={toggleHistory}
               disabled={historyBusy || !projectId}
-              className="text-[11px] px-2 py-0.5 rounded disabled:opacity-40"
+              className="text-[11px] px-2 py-0.5 rounded-md disabled:opacity-40"
               style={{
-                background: history !== null ? 'var(--accent)' : 'var(--paper-2)',
-                color: history !== null ? 'var(--accent-ink)' : 'var(--ink)',
+                background: history !== null ? 'var(--accent)' : 'transparent',
+                color: history !== null ? 'var(--accent-ink)' : 'var(--ink-soft)',
               }}
               title="AI 改过的文件可以从这里退回去"
             >
               历史
             </button>
-            <button
-              onClick={() => {
-                setMode('view');
-                setDraft('');
-              }}
-              className="text-[11px] px-2 py-0.5 rounded"
-              style={{
-                background: mode === 'view' ? 'var(--accent)' : 'var(--paper-2)',
-                color: mode === 'view' ? 'var(--accent-ink)' : 'var(--ink)',
-              }}
+            {/**
+             * 「预览 / 编辑」是一个**两档状态**，所以做成苹果的分段控件：
+             * 一个浅灰槽里放两块，选中的那块是白底 + 轻阴影（不是把整块涂蓝）。
+             * ⚠ 原来两个独立方块、选中涂实心蓝 —— 和图里「历史」这种**动作按钮**
+             *   长得一样，用户分不清"点了会做一件事"和"点了会切到一个状态"。
+             */}
+            <div
+              className="flex items-center p-0.5 rounded-md"
+              style={{ background: 'color-mix(in srgb, var(--ink) 7%, transparent)' }}
             >
-              预览
-            </button>
-            <button
-              onClick={() => { setDraft(doc?.content || ''); setMode('edit'); }}
-              className="text-[11px] px-2 py-0.5 rounded"
-              style={{
-                background: mode === 'edit' ? 'var(--accent)' : 'var(--paper-2)',
-                color: mode === 'edit' ? 'var(--accent-ink)' : 'var(--ink)',
-              }}
-            >
-              编辑
-            </button>
+              <button
+                onClick={() => {
+                  setMode('view');
+                  setDraft('');
+                }}
+                className="text-[11px] px-2 py-0.5 rounded"
+                style={{
+                  background: mode === 'view' ? 'var(--paper)' : 'transparent',
+                  color: mode === 'view' ? 'var(--ink)' : 'var(--ink-soft)',
+                  fontWeight: mode === 'view' ? 600 : 400,
+                  boxShadow: mode === 'view' ? '0 1px 2px rgba(0,0,0,.10)' : 'none',
+                }}
+              >
+                预览
+              </button>
+              <button
+                onClick={() => { setDraft(doc?.content || ''); setMode('edit'); }}
+                className="text-[11px] px-2 py-0.5 rounded"
+                style={{
+                  background: mode === 'edit' ? 'var(--paper)' : 'transparent',
+                  color: mode === 'edit' ? 'var(--ink)' : 'var(--ink-soft)',
+                  fontWeight: mode === 'edit' ? 600 : 400,
+                  boxShadow: mode === 'edit' ? '0 1px 2px rgba(0,0,0,.10)' : 'none',
+                }}
+              >
+                编辑
+              </button>
+            </div>
             {mode === 'edit' && (
               <button
                 onClick={doSave}
@@ -538,8 +560,8 @@ export default function DocPreview({
       */}
       {history !== null && (
         <div
-          className="shrink-0 px-3 py-2 border-t max-h-[160px] overflow-y-auto"
-          style={{ background: 'var(--paper-2)', borderColor: 'var(--line)' }}
+          className="shrink-0 mx-2 px-3 py-2 rounded-lg max-h-[160px] overflow-y-auto"
+          style={{ background: 'color-mix(in srgb, var(--ink) 5%, transparent)' }}
         >
           <div className="flex items-center gap-2 mb-1">
             <span className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>

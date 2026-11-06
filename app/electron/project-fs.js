@@ -96,11 +96,62 @@ const path = require('node:path');
  *   模型的 write_note 得有个落点；文件不存在的话它会先去创建，
  *   多一次写盘、也多一次失败的可能。
  */
-const TEMPLATE_FILES = {
-  '设定/世界观.md': '# 世界观\n',
-  '设定/人物库.md': '# 人物库\n',
-  '章节/章节摘要.md': '# 章节摘要\n',
+/**
+ * 项目模板：**按创作类型给不同的骨架**（2026-11-01 加）。
+ *
+ * ## 为什么必须分
+ *
+ * 原来所有项目一律建 `设定/ 卷纲/ 章节/` —— 那是**长篇网文**的骨架。
+ * 羽毛菌指出：软件现在也面向短剧漫剧，写短剧的人建完项目，
+ * 打开看到一堆长篇的东西，不知道从哪开始；而短剧的实际产出是
+ * `剧集/EP001/剧本 + 视觉设定 + 分镜`。
+ *
+ * ## 三个类型的取舍
+ *
+ * · **long**：卷纲驱动，章节按卷累积（和原来完全一致，不动）
+ * · **short**：一份设定 + 一份大纲 + 一份正文，写完就交，不需要卷纲层级
+ * · **drama**：一集一个文件夹，三个文件对应 剧本 → 视觉设定 → 分镜 的流水线，
+ *   正好对上广场里那三个短剧技能
+ *
+ * ⚠ 类型会存进 `projects.settings_json` 的 `kind`（不改表结构，零迁移），
+ *   后面新建章节、引导、技能推荐都按它分流。
+ */
+const TEMPLATES = {
+  long: {
+    dirs: ['设定', '卷纲', '章节'],
+    files: {
+      '设定/世界观.md': '# 世界观\n',
+      '设定/人物库.md': '# 人物库\n',
+      '章节/章节摘要.md': '# 章节摘要\n',
+    },
+  },
+  short: {
+    dirs: ['拆文库'],
+    files: {
+      '设定.md': '# 设定\n',
+      '小节大纲.md': '# 小节大纲\n',
+      '正文.md': '# 正文\n',
+    },
+  },
+  drama: {
+    dirs: ['剧集/EP001'],
+    files: {
+      '剧集/EP001/剧本.md': '# 剧本\n',
+      '剧集/EP001/视觉设定.md': '# 视觉设定\n',
+      '剧集/EP001/分镜.md': '# 分镜\n',
+    },
+  },
 };
+
+/** 默认类型。老调用点不传 kind 时走这套，行为和以前一致 */
+const DEFAULT_KIND = 'long';
+
+/**
+ * ⚠ `TEMPLATE_FILES` 保留给还在用老名字的地方（导出、测试），指向长篇那套。
+ *   `TEMPLATE_DIRS` 的原定义在下面「建项目时生成的空目录」那段 —— 别在这里再声明一次，
+ *   否则 `Identifier has already been declared`，整个模块加载失败、软件白屏。
+ */
+const TEMPLATE_FILES = TEMPLATES.long.files;
 
 /** 建项目时生成的空目录。刻意是空的——用户没写的东西不该替他写。 */
 /**
@@ -314,8 +365,13 @@ class ProjectFs {
 
   /**
    * 建项目文件夹 + 初始模板。幂等：已存在就直接返回，不覆盖用户改过的内容。
+   *
+   * @param {string} projectId
+   * @param {'long'|'short'|'drama'} [kind] 创作类型，决定建哪套骨架。
+   *   ⚠ 只在**首次创建**时生效。项目已存在时直接早退，
+   *     所以老项目不会因为传错 kind 被改成另一套。
    */
-  ensureProject(projectId) {
+  ensureProject(projectId, kind = DEFAULT_KIND) {
     const dir = this._dir(projectId);
     // ⚠ 外部目录**一个字都不许写**，包括模板。
     //
@@ -328,24 +384,129 @@ class ProjectFs {
     }
     if (fs.existsSync(dir)) return { created: false, dir };
     fs.mkdirSync(dir, { recursive: true });
+    // 未知类型退回长篇：宁可建一套能用的，也不要建一个空文件夹
+    const tpl = TEMPLATES[kind] || TEMPLATES[DEFAULT_KIND];
     // ⚠ 目录必须**先**建。模板文件里有 '设定/世界观.md' 这种带路径的，
     //   先写文件的话 writeFileSync 会因为父目录不存在而抛 ENOENT，
     //   而且是建到一半才抛——项目文件夹建了一半、进程挂掉。
-    for (const d of TEMPLATE_DIRS) {
+    for (const d of tpl.dirs) {
       fs.mkdirSync(this.resolveIn(projectId, d), { recursive: true });
     }
-    for (const [name, content] of Object.entries(TEMPLATE_FILES)) {
+    for (const [name, content] of Object.entries(tpl.files)) {
       // 文件名是内置常量，仍走 resolveIn 保持单一入口
       const abs = this.resolveIn(projectId, name);
       fs.mkdirSync(path.dirname(abs), { recursive: true });
       fs.writeFileSync(abs, content, 'utf8');
     }
-    return { created: true, dir };
+    return { created: true, dir, kind: TEMPLATES[kind] ? kind : DEFAULT_KIND };
   }
 
   /** 项目根的绝对路径（给"在文件管理器中打开"用） */
   projectDir(projectId) {
     return this._dir(projectId);
+  }
+
+  /**
+   * 写作进度：书架大横幅要的那一组数（2026-11-02）。
+   *
+   * ## 和 countTree 的区别
+   *
+   * `countTree` 回答"这个项目有多少文件/多少字"（全项目，含设定、卷纲）。
+   * 这里回答"**我写得怎么样**"：写了多少章、今天写了多少、连续写了几天。
+   *
+   * ## 数据怎么来的（都是近似，说清楚免得当成精确值）
+   *
+   * - **章数**：路径里带 `章节/` 或 `剧集/EP**` 的 md 文件数，排除「章节摘要.md」
+   *   （那是索引不是正文）。
+   * - **今日字数 / 连续天数**：靠**文件 mtime**。今天改过的文件，其**当前全部字数**
+   *   算作今天写的。⚠ 一天内改同一章五次也只算一次（按文件算，不按次数）——
+   *   精确做法要写历史，那是另一个功能。宁可少报，不能虚报。
+   * - ⚠ 这些数**只反映"落盘过的"**。模型流式输出到一半时文件还没变，不会算进去。
+   *
+   * @returns {{chapters:number, chars:number, todayChars:number, streakDays:number, intro:string}}
+   */
+  insight(projectId) {
+    const base = this.projectDir(projectId);
+    const empty = { chapters: 0, chars: 0, todayChars: 0, streakDays: 0, intro: '' };
+    if (!fs.existsSync(base)) return empty;
+
+    /** 本地日期串（YYYY-MM-DD）。⚠ 不能用 toISOString，那是 UTC，凌晨会差一天。 */
+    const dayKey = (d) => {
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    };
+
+    const SKIP_DIRS = new Set(['_assets', 'node_modules', '.git', '.story', '_trash']);
+    const files = [];
+    const walk = (dir, depth) => {
+      if (depth > 8) return;
+      let ents;
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+      for (const e of ents) {
+        if (e.name.startsWith('.')) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (SKIP_DIRS.has(e.name)) continue;
+          walk(full, depth + 1);
+          continue;
+        }
+        if (!/\.(md|txt)$/i.test(e.name)) continue;
+        let st, text;
+        try {
+          st = fs.statSync(full);
+          text = fs.readFileSync(full, 'utf8');
+        } catch (_) { continue; }
+        // 相对项目根的路径（统一用 /），用来判"是不是章节"
+        const rel = path.relative(base, full).split(path.sep).join('/');
+        files.push({ rel, chars: text.replace(/\s+/g, '').length, mtime: st.mtime, text });
+      }
+    };
+    walk(base, 0);
+
+    let chars = 0;
+    let chapters = 0;
+    const dayChars = new Map();   // 'YYYY-MM-DD' -> 当天涉及的字数
+    for (const f of files) {
+      chars += f.chars;
+      const isChapter = /^章节\/.+\.md$/i.test(f.rel) && !/章节摘要\.md$/i.test(f.rel);
+      const isEpisode = /^剧集\/.+\.md$/i.test(f.rel);
+      if (isChapter || isEpisode) chapters++;
+      const k = dayKey(f.mtime);
+      dayChars.set(k, (dayChars.get(k) || 0) + f.chars);
+    }
+
+    // 连续天数：从今天往前数。今天没写就不算断 —— 从昨天开始数也合理，
+    // 但"今天还没写"时显示 0 会让人以为记录坏了，所以今天为 0 就从昨天起算。
+    const today = new Date();
+    const todayChars = dayChars.get(dayKey(today)) || 0;
+    let streakDays = 0;
+    const cursor = new Date(today);
+    if (!todayChars) cursor.setDate(cursor.getDate() - 1);
+    for (let i = 0; i < 4000; i++) {
+      if (!dayChars.has(dayKey(cursor))) break;
+      streakDays++;
+      cursor.setDate(cursor.getDate() - 1);
+    }
+
+    /**
+     * 简介：取设定文档里**第一个有内容的段落**。
+     * ⚠ 顺序是「短的优先」：`设定.md`（短篇/短剧的框架）通常比 `设定/世界观.md` 更像简介。
+     * ⚠ 必须剔掉标题行、引用、列表符号 —— 否则简介会是「# 世界观」。
+     */
+    const INTRO_SOURCES = ['设定.md', '设定/世界观.md', '设定/题材定位.md'];
+    let intro = '';
+    for (const p of INTRO_SOURCES) {
+      const f = files.find((x) => x.rel === p);
+      if (!f) continue;
+      const lines = f.text.split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !/^#{1,6}\s/.test(l) && !/^[-*>|]/.test(l) && !/^---$/.test(l));
+      // 第一段够长就用它；太短（如"## 一、天下"这种分节下的半句）就接着往下找
+      const pick = lines.find((l) => l.length >= 12) || lines[0] || '';
+      if (pick) { intro = pick.slice(0, 70); break; }
+    }
+
+    return { chapters, chars, todayChars, streakDays, intro };
   }
 
   /**

@@ -19,6 +19,19 @@ app/dist/
 app/shots-verify/
 *.blockmap
 
+# ---------- 开发过程的截图与一次性脚本（2026-11-06 补回） ----------
+# ⚠ 远端那份 .gitignore 把这一组弄丢了，结果 179 张开发截图全变成未跟踪、
+#   一提交就是几十 MB。README 只用一张，其余都是逐张比对时的产物。
+# ⚠ 只放行 README 用的那张 —— 用 ! 反向例外，顺序不能颠倒。
+app/shots/*.png
+!app/shots/main-ui.png
+app/shots/*.jpg
+app/shots/*.gif
+
+# 31 个 diag-*.js / shoot-*.js 是排查问题时写的，不是产品代码
+app/diag-*.js
+app/shoot-*.js
+
 # ---------- 备份 ----------
 # 改技能时留的历史快照
 app/builtin-skills.bak-*/
@@ -50,6 +63,12 @@ app/wt_109/
 tmp/
 .tmp-shot/
 *.tmp-shot/
+
+# 2026-11-06 补：改界面时留的整目录备份，以及逐张比对用的截图目录。
+# 它们不是产品代码，进仓库只会让 clone 变大。
+app/_bak-*/
+app/apple-shots/
+app/theme-shots/
 
 # ---------- 编辑器 / 系统 ----------
 .vscode/

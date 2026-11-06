@@ -2,6 +2,8 @@ export default ProviderCat;
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { H1, Group, Field, Hint, StatusDot } from './settings-ui.jsx';
+import { pickHotModels } from '../lib/hot-models.mjs';
+import ImageProviderCat from './ImageProviderCat.jsx';
 
 /**
  * AI 提供商：多连接。
@@ -531,7 +533,19 @@ function ProviderCat({ onToast, onConfigChange }) {
 
   const models = probe?.ok ? (probe.models || []) : [];
   const modelsInUse = draft?.model ? [draft.model] : [];
-  const showAll = models.filter((m) => !modelsInUse.includes(m));
+  /**
+   * ⚠ 2026-11-03：不再把服务端返回的模型**全铺出来**。
+   *
+   *   百炼一次返回 183 个（语音、OCR、重排、embedding、各种实验版），
+   *   铺满一屏全是看不懂的英文。羽毛菌：「183 个模型太多了……
+   *   要展示的话，展示主流的二十个就够了」。
+   *
+   *   现在只取常见的一批（`hot-models.mjs` 里按家族打分 + 剔除非对话模型），
+   *   其余**不显示但依然可用** —— 直接在上面输入框填名字就行，
+   *   输入框本来就在，不需要"展开全部"这种开关。
+   */
+  const picked = pickHotModels(models, 20);
+  const showAll = picked.hot.filter((m) => !modelsInUse.includes(m));
 
   /**
    * 主区该显示什么——**三态，不是两态**：
@@ -806,7 +820,7 @@ function ProviderCat({ onToast, onConfigChange }) {
                         : !probe ? '还没测过。填好地址和密钥后点右边「获取模型列表」。'
                           : probe.ok
                             ? `连接成功${probe.version ? `（服务端 v${probe.version}）` : ''}`
-                              + (models.length ? `，${models.length} 个模型可用` : '')
+                              + (picked.total ? `，共 ${models.length} 个模型` : '')
                             : probe.error}
                     </span>
                   </div>
@@ -832,7 +846,7 @@ function ProviderCat({ onToast, onConfigChange }) {
                   <Hint>
                     {models.length === 0
                       ? '模型名各家不通用，填错了会报错。可以先填一个常见的试，测不通再改。'
-                      : '点上面的模型名填进输入框。模型会变，这里列的是服务端此刻返回的。'}
+                      : '上面只列常见的一批。其它模型名直接填进上面的输入框，填对就能用。'}
                   </Hint>
                 </Field>
               </Group>
@@ -900,6 +914,15 @@ function ProviderCat({ onToast, onConfigChange }) {
           }}
         />
       )}
+
+      {/**
+       * 封面生图配置（2026-11-02，羽毛菌要的「在这下面多一个入口」）。
+       *
+       * ⚠ 它必须**独立于上面的连接列表**：上面的每一条都是"谁来写字"，
+       *   这里只有一份，是"谁来画图"。放进左栏列表会让用户以为
+       *   「生图连接」也能拿来聊天 —— 那必 400。
+       */}
+      <ImageProviderCat onToast={onToast} />
     </>
   );
 }

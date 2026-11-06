@@ -20,15 +20,15 @@
  *   下载都可能变，出问题没法复现。
  */
 const FONTS = [
-  {
-    id: 'lgwk',
-    label: '霞鹜文楷',
-    family: "'LXGW WenKai'",
-    file: 'LXGW-WenKai.ttf',
-    url: 'https://cdn.jsdelivr.net/gh/lxgw/LxgwWenKai@v1.522/fonts/TTF/LXGWWenKai-Regular.ttf',
-    sizeMB: 17.3,
-    desc: '手写楷意，长文最耐读',
-  },
+  /**
+   * ⚠ 原来的「霞鹜文楷」（id: `lgwk`）2026-11-02 移除。
+   *
+   *   它那个 17.3MB 的 TTF 在这台机器上始终下不下来（jsDelivr 全线被掐），
+   *   留在列表里就是一个永远点不动的「下载」按钮 —— 用户看到的不是
+   *   "网络不通"，而是"这软件坏了"。宁可拿掉。
+   *
+   *   下方 `lgwk-gb` 是同一套字的 GB 版：字表更全、同样规整，留一个够了。
+   */
   {
     id: 'lgwk-gb',
     label: '霞鹜文楷 GB',

@@ -58,9 +58,11 @@ export default function FileBox({
        用 h-full 会撑满整个右栏，把编辑器挤成 0 高度。 */
     <aside className="flex flex-col min-h-0 flex-1"
            style={{ background: 'var(--paper)' }}>
-      {/* Tab（hideTabs 时不渲染——切换交给主标签） */}
+      {/* Tab（hideTabs 时不渲染——切换交给主标签）
+          ⚠ 2026-11-02 去掉这条通栏底线：选中态本来就有「浅底 + 强调色下划线」，
+             再画一条横线等于同一件事说两遍，而且它是"工业感"的来源之一。 */}
       {!hideTabs && (
-      <div className="flex shrink-0 overflow-x-auto" style={{ borderBottom: '1px solid var(--line)' }}>
+      <div className="flex shrink-0 overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.key}

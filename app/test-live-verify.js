@@ -136,6 +136,23 @@ app.whenReady().then(async () => {
   await new Promise((r) => setTimeout(r, 1800));
   const j = (c) => win.webContents.executeJavaScript(c);
 
+  /**
+   * ⚠ 1.3.7 之后打开先显示**书架首页**，要点进一本书才有 textarea。
+   *   这个脚本是那之前写的，一直没补这一步 —— 于是它从 1.3.7 起
+   *   就只会看到书架、判定"界面没渲染"，后面的断言一条都不跑。
+   */
+  const entered = await j(`
+    (() => {
+      var b = document.querySelector('[data-testid="shelf-hero-continue"]');
+      if (b) { b.click(); return 'ok'; }
+      var c = document.querySelector('[data-testid="bookshelf-card"]');
+      if (c) { c.click(); return 'ok-card'; }
+      return 'no-entry';
+    })()
+  `);
+  console.log('  进编辑器:', entered);
+  await new Promise((r) => setTimeout(r, 1800));
+
   const health = await j(`(() => {
     const r = document.getElementById('root');
     return { kids: r ? r.children.length : 0, ta: !!document.querySelector('textarea') };
@@ -255,11 +272,20 @@ app.whenReady().then(async () => {
   //   它本身只是「点一下弹一个面板」，真渲染的增量价值很小；
   //   真正需要真渲染的是字号与文件树那两条。
   //   静态侧由 test-live-verify-static.js 盯住。
-  check('★ 教程组件存在且按连接给推荐值', () => {
+  check('★ 说明组件存在，且区分"常见值"与"以官方为准"', () => {
     const g = fs.readFileSync(path.join(APPDIR, 'src', 'components', 'ParamGuide.jsx'), 'utf8');
-    assert(/128K/.test(g), '教程里没有 128K 这个推荐值');
-    assert(/deepseek/i.test(g), '教程没有 DeepSeek 那一档');
-    assert(/已核实/.test(g) && /待核实/.test(g), '没有区分核实状态（等于假装全都知道）');
+    assert(/128K/.test(g), '说明里没有 128K 这个常见值');
+    assert(/deepseek/i.test(g), '说明没有 DeepSeek 那一档');
+    /**
+     * ⚠ 2026-11-03 需求变了：原来要求出现 `[已核实]` / `[待核实]`，
+     *   但那是**给我自己看的内部标记**，羽毛菌要"像说明书"——
+     *   界面上不该出现这种术语。改成要求：
+     *     · 明确说明这是"常见值"（承认会变，不是承诺）
+     *     · 有"查不到时怎么定"的自测方法（查不到就不教，让用户自己试）
+     */
+    assert(/常见值/.test(g), '没有说明这是"常见值"（等于假装是标准值）');
+    assert(/查不到/.test(g), '没有"查不到怎么办"的自测指引');
+    assert(!/\[待核实\]/.test(g), '界面上还留着 [待核实] 这种内部标记');
   });
 
   try { win.showInactive(); win.focus(); await new Promise((r) => setTimeout(r, 900)); } catch (_) { /* 沙箱 */ }

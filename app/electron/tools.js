@@ -48,7 +48,7 @@ const os = require('node:os');
 const TOOL_GROUPS = {
   terminal: ['terminal'],
   // ⚠ 读写文件是同一件事的两半，必须同组同权（2026-10-18）
-  file: ['write_note', 'read_file', 'list_files'],
+  file: ['write_note', 'read_file', 'list_files', 'delete_file', 'read_reference'],
   web: ['web_search', 'web_fetch'],
 };
 
@@ -171,6 +171,8 @@ const TOOL_DEFS = [
       name: 'write_note',
       description:
         '把一段内容写进当前小说项目里的某个文件（设定文档、卷纲等）。'
+        + '**调用时第一件事是给出 path，然后再拼 content** —— '
+        + '只给 content 不给 path 会被拒绝（日志里已经出现过 18 次空参数调用）。'
         + '路径用项目里的相对写法，例如 设定/世界观.md、卷纲/总纲.md、章节/第一章.md。'
         + '用户点名了写哪个文件时，会直接写入；'
         + '写你自己挑的文件，会先问过用户。',
@@ -192,6 +194,82 @@ const TOOL_DEFS = [
           reason: { type: 'string', description: '为什么要写这里，一句话，会展示给用户。' },
         },
         required: ['path', 'content'],
+      },
+    },
+  },
+  /**
+   * 删文件（2026-10-29 加）。
+   *
+   * ## 为什么必须加
+   *
+   * 没有这个工具时，模型对"能不能删"的认知是飘的：同一个问题，
+   * 一次回「我这边做不了，被拦下了」，一次回「我现在就动手」——
+   * **两次都在说嘴**，因为工具列表里根本没有这个能力。
+   *
+   * 更糟的是它会建议用户「在文件列表里右键删除」，而那个功能不存在。
+   * **能力边界写进工具列表，模型才不用猜。**
+   */
+  {
+    type: 'function',
+    function: {
+      name: 'delete_file',
+      description:
+        '删除当前项目里的一个文件。'
+        + '⚠ 只在用户**明确要求删除某个具体文件**时用 —— 他说了"删掉/删除/不要了"，'
+        + '并且指明了是哪个文件（@ 了它、或说了文件名）。'
+        + '如果他只是说"这段写得不好""重写一下"，那是改写，用 write_note，**不要删文件**。'
+        + '删之前先 read_file 看一眼，把内容摘要说给他听 —— 删掉的东西他要能确认。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: '要删的文件（项目内相对路径，例如 章节/第一章.md）。',
+          },
+          reason: { type: 'string', description: '为什么删，一句话，会展示给用户。' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  /**
+   * 读技能自带的参考资料（2026-10-30 加）。
+   *
+   * ## 为什么必须有它
+   *
+   * 从技能广场装来的技能，价值**几乎全在 `references/` 里**：
+   * 短篇写作有 37 份（10 个题材配方、反转设计、对白技巧…），
+   * 短篇拆文有 15 份（分阶段的拆解方法论）。
+   *
+   * 而这些文件的正文**不进上下文** —— `buildRefBlock` 只拼 `prompt_content`。
+   * 在加这个工具之前，模型照着技能正文说「我先读 references/xxx.md」，
+   * 然后**没有任何手段能读到它**：`read_file` 只能读项目目录。
+   * 结果是技能正文里那些"必读""强制加载"的要求全部落空，
+   * 模型要么说"我无法访问文件"，要么拿四千字的流程说明硬写。
+   *
+   * ## 为什么不分块
+   *
+   * 单份 reference 最大 20KB 左右（约 1.3 万字），读一次足够；
+   * 上限设在 12000 字，超了明确告知被截断，而不是悄悄少给一半。
+   */
+  {
+    type: 'function',
+    function: {
+      name: 'read_reference',
+      description:
+        '读当前对话选中的技能自带的参考资料（`references/` 下的方法论文档）。'
+        + '技能正文里写「读 references/xxx.md」「完整读取某文档」时，用它读。'
+        + '⚠ 这是读**技能资料**的工具；项目里的章节、设定用 read_file。'
+        + '不带 path 调用 → 返回这个技能有哪些文件可读。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: '文件路径，例如 references/short-reversal.md。不填则列出全部可读文件。',
+          },
+        },
+        required: [],
       },
     },
   },
@@ -490,6 +568,172 @@ function fmtSize(n) {
  * @param {object} ctx {readFile, fileExists}
  * @returns {object} {ok, output}
  */
+/**
+ * 删文件（2026-10-29）。
+ *
+ * ## 设计参照竞品：读 → 删 → 列 → 报
+ *
+ * 竞品删得很爽快，但不是"无脑删"：它**先读一遍**（确认是目标文件、留下内容摘要），
+ * 删完**列一次目录**（证明真删了），最后**报告删了什么、还剩什么**。
+ * 这一套下来，用户既不用点审批，也不心虚。
+ *
+ * ## 这里的额外保险
+ *
+ * 删之前把内容**抄一份到 `.trash/`**（项目内的回收站）。
+ * 用户看不见它，但删错了能捞回来——真删一次就把人一天的工作弄没了，
+ * 而多写一个文件的成本是零。
+ */
+function runDeleteFile(a, ctx) {
+  const target = String(a.path || '').trim().replace(/\\/g, '/');
+  if (!target) return { ok: false, output: '没有给要删的文件路径。' };
+
+  // 和 read_file / write_note 同一套形态检查
+  if (target.startsWith('/') || /^[A-Za-z]:/.test(target) || target.split('/').includes('..')) {
+    return { ok: false, output: `路径不合法：${target}。必须是项目里的相对路径。` };
+  }
+
+  /**
+   * ⚠ 先确认存在。删不存在的文件不该"成功" ——
+   *   否则模型会以为删掉了，跟用户汇报"已清理"，而那个文件还在。
+   */
+  if (typeof ctx.fileExists === 'function' && !ctx.fileExists(target)) {
+    return {
+      ok: false,
+      output: `项目里没有这个文件：${target}\n`
+        + '先用 list_files 看一眼目录，确认文件名（注意扩展名和子目录）。',
+    };
+  }
+
+  // 读一遍：既留摘要，也确认它是文本（二进制文件不该被这个工具碰）
+  let preview = '';
+  try {
+    preview = String(ctx.readFile(target) || '');
+  } catch (e) {
+    return { ok: false, output: `读不了 ${target}，不敢盲删：${e.message}` };
+  }
+  if (preview.length > 20000) {
+    return {
+      ok: false,
+      output: `${target} 有 ${preview.length} 字，太大了。`
+        + '这么大通常不是单章，先确认路径对不对，或者用 write_note 改写而不是删。',
+    };
+  }
+
+  // 抄一份到回收站
+  const trashPath = `.trash/${target.replace(/\//g, '_')}.${Date.now().toString(36)}.bak`;
+  try {
+    ctx.writeFile(trashPath, preview, { backup: false });
+  } catch (e) {
+    // 备份失败就不删 —— 这是"不可逆"操作的最后一道保险
+    return { ok: false, output: `备份失败，为安全起见没有删除：${e.message}` };
+  }
+
+  try {
+    ctx.remove(target);
+  } catch (e) {
+    return { ok: false, output: `删除失败：${e.message}` };
+  }
+
+  const head = preview.replace(/\s+/g, ' ').slice(0, 80);
+  return {
+    ok: true,
+    output: `已删除：${target}（${preview.length} 字）\n`
+      + `内容开头：${head}${preview.length > 80 ? '…' : ''}\n`
+      + `（备份在项目里的 ${trashPath}，需要找回就说一声）`,
+  };
+}
+
+/**
+ * 读技能自带的参考资料（2026-10-30）。
+ *
+ * ## 三条边界
+ *
+ * 1. **只能读本轮选中技能的附件** —— 名单由主进程注入（`ctx.listReferences`），
+ *    不接收模型自己拼的路径前缀，所以穿不到项目目录或别的技能。
+ * 2. **路径必须是清单里的原样**（或去掉开头的 `./`）——
+ *    不做 basename 兜底匹配：两个技能都有 `references/index.md` 时，
+ *    按文件名猜会读到错的那一份。
+ * 3. **单次上限 12000 字**，超了明确告知被截断。
+ *    悄悄少给一半比直接拒绝更糟 —— 模型会以为读完了，然后基于半份资料写。
+ */
+const REFERENCE_MAX_CHARS = 12000;
+
+function runReadReference(a, ctx) {
+  const list = (typeof ctx.listReferences === 'function' ? ctx.listReferences() : null) || [];
+  if (!list.length) {
+    return {
+      ok: false,
+      output: '这一轮没有选中技能，或者选中的技能没有附带参考资料。\n'
+        + '（用户勾选技能后才有资料可读；没有的话就按技能正文里的方法直接做。）',
+    };
+  }
+
+  const want = String(a.path || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+
+  // 不带 path → 列清单
+  if (!want) {
+    /**
+     * ⚠ 单位写"字"不写"KB"：库里的 size 是 `length(content)`，即**字符数**。
+     *   中文一个字约 3 字节，按 /1024 当 KB 显示会只有实际的 1/3，
+     *   模型据此判断"这份很小可以忽略"，读的时候才发现有一万多字。
+     */
+    const rows = list.map((f) => `· ${f.path}${f.size ? `（${f.size} 字）` : ''}`);
+    return {
+      ok: true,
+      output: `这个技能自带 ${list.length} 份参考资料：\n${rows.join('\n')}\n\n`
+        + '要读哪一份就 read_reference({ path: "…" })。技能正文里点名要求读的，按它说的读。',
+    };
+  }
+
+  // 形态校验：不许绝对路径、不许穿目录
+  if (want.startsWith('/') || /^[A-Za-z]:/.test(want) || want.split('/').includes('..')) {
+    return { ok: false, output: `路径不合法：${want}。只能是清单里的相对路径。` };
+  }
+
+  const hit = list.find((f) => f.path === want);
+  if (!hit) {
+    /**
+     * 给候选，帮模型自己纠正路径。
+     *
+     * ⚠ 比的是**文件名**而不是整条路径：模型最常犯的错是漏掉目录前缀
+     *   （写 `references/reversal.md`，实际是 `references/short-reversal.md`），
+     *   整条比永远匹配不上。
+     * ⚠ 候选**只用于提示，绝不用于读取** —— 两个技能都可能有 `index.md`，
+     *   按文件名兜底会读到错的那一份。
+     */
+    const base = want.split('/').pop();
+    const near = list
+      .filter((f) => {
+        const fb = f.path.split('/').pop();
+        return fb === base || fb.includes(base) || base.includes(fb) || f.path.includes(want);
+      })
+      .slice(0, 5);
+    return {
+      ok: false,
+      output: `这个技能里没有 ${want}。\n`
+        + (near.length
+          ? `最接近的几份：\n${near.map((f) => `· ${f.path}`).join('\n')}`
+          : '调用 read_reference（不带参数）看完整清单。'),
+    };
+  }
+
+  const raw = typeof ctx.readReference === 'function' ? ctx.readReference(hit.path) : '';
+  if (raw === null || raw === undefined || raw === '') {
+    return { ok: false, output: `${hit.path} 读不到内容（可能是空文件）。先按技能正文里的方法做，需要的话换一份读。` };
+  }
+
+  const text = String(raw);
+  if (text.length > REFERENCE_MAX_CHARS) {
+    return {
+      ok: true,
+      output: `${text.slice(0, REFERENCE_MAX_CHARS)}\n\n`
+        + `【这份资料共 ${text.length} 字，这里只给了前 ${REFERENCE_MAX_CHARS} 字 —— `
+        + '后面的部分没读到，别当成全文已读。】',
+    };
+  }
+  return { ok: true, output: text };
+}
+
 function runReadFile(a, ctx) {
   const target = String(a.path || '').trim().replace(/\\/g, '/');
   if (!target) return { ok: false, output: '没有给文件路径。' };
@@ -1240,6 +1484,18 @@ async function execTool(name, args, ctx = {}) {
     case 'write_note':
       return runWriteNote(a, ctx);
     /**
+     * 删文件（2026-10-29）。
+     *
+     * ⚠ 它**不走审批**，理由和竞品一样：用户明确 @ 了文件 + 明确说"删除"时，
+     *   再弹一个"确定要删吗"只是走流程。真正的保险放在实现里 ——
+     *   先读（留摘要）、再抄一份到 `.trash/`、最后才删。
+     *
+     * ⚠ 但**模糊指代必须问**：用户说"删掉那个废稿"而没说哪个文件时，
+     *   模型应该先问清，不要自己挑一个删。
+     */
+    case 'delete_file':
+      return runDeleteFile(a, ctx);
+    /**
      * ⚠ 读文件与写文件同级（2026-10-18）。
      *
      * 加之前的情形：模型要看章节原文，手上一个读文件的工具都没有，
@@ -1248,6 +1504,15 @@ async function execTool(name, args, ctx = {}) {
      */
     case 'read_file':
       return runReadFile(a, ctx);
+    /**
+     * 读技能自带的参考资料（2026-10-30）。
+     *
+     * ⚠ 和 read_file 分开而不是合并成一个工具：
+     *   两者数据源完全不同（项目磁盘 vs 技能库），
+     *   合并后模型分不清"读哪"，还会出现拿项目路径去查技能库的误用。
+     */
+    case 'read_reference':
+      return runReadReference(a, ctx);
     case 'list_files':
       return runListFiles(a, ctx);
     default:
@@ -1262,6 +1527,9 @@ module.exports = {
   pickToolDefs,
   DANGEROUS_RULES,
   classifyCommand,
+  /** 给判据用（test-read-reference.js）：单独测这个工具的边界，不必起整个主进程 */
+  runReadReference,
+  REFERENCE_MAX_CHARS,
   mentionsOutside,
   runTerminal,
   pathMentioned,
