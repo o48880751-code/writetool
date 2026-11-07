@@ -207,7 +207,21 @@ export default function SettingsPage({
   }, [onConfigChange]);
 
   return (
-    <div className="settings-root absolute inset-0 z-40 flex flex-col" style={{ background: 'var(--paper)' }}>
+    /**
+     * ⚠⚠ `top-10` 不能省（2026-11-07 羽毛菌截图：设置页右上角没有最小化/关闭按钮）。
+     *
+     *   原来写的是 `absolute inset-0` —— 设置页从窗口最顶端开始铺，
+     *   把 App 的自定义标题栏（h-10 = 40px）整个盖住了。
+     *   而窗口三颗按钮就长在那条标题栏上，于是整页设置的时候既最小化不了、
+     *   也关不掉，只剩 Esc 和"返回"能用。
+     *
+     * ⚠ 这个 40 必须和 App.jsx 里标题栏的 `h-10` 一致。改任一处都要同步，
+     *   判据里有一条专门比对两者（test-settings-v3.js）。
+     */
+    <div
+      className="settings-root absolute inset-x-0 bottom-0 top-10 z-40 flex flex-col"
+      style={{ background: 'var(--paper)' }}
+    >
       {/* ---- 顶栏：返回键 + 标题 + 保存提示 ---- */}
       <div
         className="shrink-0 h-11 flex items-center gap-3 px-4"

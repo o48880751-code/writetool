@@ -23,6 +23,28 @@
  */
 
 const { execSync } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+/**
+ * 算出生成的安装包真实路径。
+ *
+ * ⚠ 为什么不在结束时写死文件名：2026-11-07 打包是**成功**的，
+ *   但 `打包.bat` 末尾硬编码了 `release\WriteTool-0.1.0-setup.exe`
+ *   （品牌改名前 + 版本号还是占位值），羽毛菌按那句提示去 release 里找，
+ *   发现没有 → 以为打包失败，白等一轮。
+ *   以后改 artifactName 或升版本，这里会自动跟着变。
+ */
+function installerPath() {
+  const pkg = require(path.join(__dirname, 'package.json'));
+  const tpl = (pkg.build && pkg.build.win && pkg.build.win.artifactName)
+    || '${name}-${version}-setup.${ext}';
+  const file = tpl
+    .replace(/\$\{name\}/g, pkg.name || 'app')
+    .replace(/\$\{version\}/g, pkg.version || '0.0.0')
+    .replace(/\$\{ext\}/g, 'exe');
+  return { file, abs: path.join(__dirname, 'release', file), version: pkg.version };
+}
 
 /**
  * 同步睡眠。
@@ -63,4 +85,27 @@ for (let i = 0; i < STEPS.length; i++) {
   console.log(`  [OK] ${s.label}（${((Date.now() - t0) / 1000).toFixed(1)}s）\n`);
 }
 
-console.log('=== 打包完成 ===\n');
+/**
+ * ⚠ 不要只打一句"打包完成"就结束。
+ *   打包失败和"你找错地方了"在用户眼里长得一模一样 ——
+ *   必须把**真实存在的路径 + 体积 + 生成时间**摆出来，
+ *   他双击就能装，不用再去翻目录。
+ */
+const out = installerPath();
+if (fs.existsSync(out.abs)) {
+  const st = fs.statSync(out.abs);
+  const mb = (st.size / 1048576).toFixed(1);
+  const at = new Date(st.mtimeMs);
+  const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  console.log('=== 打包完成 ===\n');
+  console.log(`  版本    v${out.version}`);
+  console.log(`  安装包  ${out.abs}`);
+  console.log(`  体积    ${mb} MB（生成于 ${hhmm}）`);
+  console.log('\n  ⚠ 装之前先把正在运行的 InkScroll / WriteTool 全部退出，');
+  console.log('    旧进程会占着同一个数据库，覆盖安装后可能起不来。\n');
+} else {
+  console.log('=== 打包结束，但没找到安装包 ===\n');
+  console.log(`  期望路径：${out.abs}`);
+  console.log('  说明 artifactName 与实际产物不一致，去 release/ 目录看一眼真实文件名。\n');
+  process.exit(1);
+}

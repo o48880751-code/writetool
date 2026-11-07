@@ -311,6 +311,83 @@ body {
   background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
+/* ---------------- 生成中：跳动的三个点（2026-11-07） ----------------
+ * ⚠ 这三个点的唯一职责是"证明还活着"。
+ *   静止的省略号和卡死在视觉上没有区别 —— 羽毛菌就是被这个骗到了。
+ * ⚠ prefers-reduced-motion 下必须停：不动的点会退回原来那个问题，
+ *   所以那种情况下改成整块文字半透明闪烁由 CSS 变量控制，见下方媒体查询。
+ */
+.msg-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 7px;
+  vertical-align: middle;
+}
+.msg-dots i {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background-color: currentColor;
+  opacity: .28;
+  animation: msgDot 1.15s ease-in-out infinite;
+}
+.msg-dots i:nth-child(2) { animation-delay: .16s; }
+.msg-dots i:nth-child(3) { animation-delay: .32s; }
+
+@keyframes msgDot {
+  0%, 65%, 100% { opacity: .22; transform: translateY(0); }
+  30%           { opacity: 1;   transform: translateY(-2px); }
+}
+
+/* 等待条：比正文淡一档，不让它看起来像回答了半句 */
+.msg-wait {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink-soft, var(--ink));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-dots i { animation: none; opacity: .55; }
+}
+
+/* ---------------- 消息里的表格（2026-11-07） ----------------
+ * 模型经常甩一张两列对照表出来。原来没有表格支持，
+ * 界面上原样打着 `| 名字暗示 | 现在的设定 |` 和 `|---|---|`，像乱码。
+ *
+ * ⚠ 外层必须包一个可横向滚动的容器：竖屏 640 下两列中文就撑破气泡了，
+ *   直接把 <table> 塞进气泡会让整条消息横向溢出，把气泡顶出边界。
+ * ⚠ 表格内要 white-space: normal —— 气泡是 pre-wrap，
+ *   不过这一条的话每个单元格都会按原样保留缩进和换行。
+ */
+.msg-table-wrap {
+  margin: 6px 0;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  /* 气泡是 pre-wrap，容器这里恢复普通流 */
+  white-space: normal;
+}
+.msg-table {
+  border-collapse: collapse;
+  font-size: .92em;
+  line-height: 1.5;
+  min-width: 100%;
+}
+.msg-table th,
+.msg-table td {
+  border: 1px solid var(--line-2, var(--line));
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+  /* 中文表格按内容断行，不要强行 nowrap —— 一列长句会撑成一条超宽横条 */
+  word-break: break-word;
+}
+.msg-table th {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 :root {
   /* ---- 引用 chip 的两套色（技能=紫 / 文件=绿）----
      ⚠ 2026-10-16：原来这两套色**写死在 ChatPanel 的 JSX 里**，
@@ -1287,6 +1364,127 @@ section[data-pane-closing='1'] {
 }
 .set-bubble-btn:hover { background-color: color-mix(in srgb, var(--ink) 15%, var(--paper)); }
 .set-bubble-btn:active { transform: scale(.96); }
+
+/* ---------------- 局域网传文件（2026-11-06） ----------------
+ * 手机扫码用的面板。三个必须守住的视觉点：
+ *  ⚠ 二维码区域**永远白底** —— 深色主题下画成黑底白码，一半手机扫不出来。
+ *  ⚠ 地址要能整段看清（用户可能手动输），所以等宽字体 + 允许换行。
+ *  ⚠ 底色全走变量，不写死灰度，否则深色主题下会变成一块白斑。
+ */
+.lan-card {
+  width: 396px;
+  max-width: calc(100vw - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* ⚠ `.modal-card` 只有入场动画，背景/圆角/阴影得自己写 ——
+     少了这三行，弹窗就是一块透明的浮字（第一版截图就是这样）。 */
+  background-color: var(--paper);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px -12px rgba(17, 20, 24, .38), 0 2px 8px rgba(17, 20, 24, .12);
+}
+.lan-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px;
+}
+.lan-x {
+  width: 26px; height: 26px; border: 0; border-radius: 8px;
+  background-color: transparent; color: var(--ink-soft);
+  font-size: 12px; line-height: 1; cursor: pointer;
+  transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+.lan-x:hover { background-color: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--ink); }
+
+.lan-body { padding: 4px 16px 10px; }
+
+.lan-qr {
+  width: 190px; height: 190px;
+  margin: 6px auto 8px;
+  padding: 10px;
+  border-radius: 12px;
+  /* ⚠ 固定白底黑码，不跟主题。见文件头注释 */
+  background-color: #fff;
+  box-shadow: 0 1px 3px rgba(17, 20, 24, .12);
+}
+.lan-qr svg { display: block; width: 100%; height: 100%; }
+
+.lan-tip { text-align: center; font-size: 12px; color: var(--ink-soft); margin-bottom: 12px; }
+
+.lan-url {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background-color: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.lan-url code {
+  flex: 1 1 auto; min-width: 0;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px; line-height: 1.5; color: var(--ink);
+  word-break: break-all;
+  user-select: all;
+}
+.lan-copy {
+  flex: 0 0 auto;
+  border: 0; border-radius: 999px;
+  padding: 5px 11px; font: inherit; font-size: 11.5px;
+  background-color: color-mix(in srgb, var(--ink) 10%, var(--paper));
+  color: var(--ink); cursor: pointer;
+  transition: background-color 150ms var(--ease-out);
+}
+.lan-copy:hover { background-color: color-mix(in srgb, var(--ink) 16%, var(--paper)); }
+
+.lan-note {
+  margin-top: 10px;
+  font-size: 11.5px; line-height: 1.65; color: var(--ink-soft);
+}
+.lan-note b { color: var(--ink); font-weight: 600; }
+
+.lan-got {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+.lan-got-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 11.5px; color: var(--ink-soft); margin-bottom: 6px;
+}
+.lan-got-head b { color: var(--ink); font-weight: 600; }
+.lan-empty { font-size: 11.5px; line-height: 1.6; color: var(--ink-soft); }
+.lan-empty b { color: var(--ink); font-weight: 600; }
+.lan-list { list-style: none; margin: 0; padding: 0; max-height: 132px; overflow-y: auto; }
+.lan-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 6px 2px; font-size: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.lan-list li:last-child { border-bottom: 0; }
+.lan-fname {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink);
+}
+.lan-fsize { flex: 0 0 auto; font-size: 11px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+.lan-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--line);
+}
+.lan-stamp {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 11px; color: var(--ink-soft);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.lan-btn {
+  flex: 0 0 auto;
+  border: 0; border-radius: 999px;
+  padding: 7px 14px; font: inherit; font-size: 12px;
+  background-color: var(--ink); color: var(--paper);
+  cursor: pointer;
+  transition: opacity 150ms var(--ease-out), transform 120ms var(--ease-out);
+}
+.lan-btn:hover { opacity: .86; }
+.lan-btn:active { transform: scale(.97); }
 
 /* ---------------- 工具调用卡片（2026-11-05 苹果风重做） ----------------
  * 原来：4px 圆角 + 1px 实边 + 11.5px 字，一排灰色方块。

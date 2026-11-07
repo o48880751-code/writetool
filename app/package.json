@@ -1,6 +1,6 @@
 {
   "name": "writetool",
-  "version": "2.0.4",
+  "version": "2.0.6",
   "description": "本地长篇小说写作工具，数据不出本机",
   "displayName": "长卷",
   "main": "electron/main.js",
@@ -131,6 +131,7 @@
     "@tiptap/pm": "^3.31.4",
     "@tiptap/react": "^3.31.4",
     "@tiptap/starter-kit": "^3.31.4",
+    "qrcode-generator": "^2.0.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

@@ -24,6 +24,7 @@ import ProjectSwitcher from './components/ProjectSwitcher.jsx';
 import { ToolApprovalModal } from './components/ToolCards.jsx';
 import AgreementModal from './components/AgreementModal.jsx';
 import { GuideModal } from './components/Welcome.jsx';
+import LanShare from './components/LanShare.jsx';
 import { DEFAULT_MODE, applyTheme, isValidMode, systemPrefersDark } from './themes.js';
 import { thinkLevelsOf, normalizeLevel } from './think-levels.js';
 import { useBootstrapFonts } from './lib/fonts.js';
@@ -137,6 +138,8 @@ export default function App() {
    *   显示上一本书的按钮。算出来没有这个问题。
    */
   const [showGuide, setShowGuide] = useState(false);
+  /** 局域网传文件面板（2026-11-06）。打开才起服务，关掉就停 */
+  const [showLan, setShowLan] = useState(false);
   /** 传给第 4 栏：要展开哪个目录。带 nonce，同一个目录连点两次也能重新展开。 */
   const [focusDir, setFocusDir] = useState(null);
   /**
@@ -2692,7 +2695,12 @@ const pickProject = useCallback(async (id) => {
           * ⚠ 必须显式 `-webkit-app-region: no-drag`：顶栏整条是拖拽区，
           *   app-region 是继承的，漏标的话按钮按不动（表现为"点了没反应"）。
           */}
-        {view === 'editor' && (
+        {/**
+          * ⚠⚠ 加 `!showSettings`（2026-11-07）：设置页是**盖在上面**的一层，
+          *   底下的 view 状态照样能改 —— 点了这个箭头它会把底下的视图换成书架，
+          *   而设置页还压着，用户看到的是"按了完全没反应"。
+          */}
+        {view === 'editor' && !showSettings && (
           <button
             onClick={() => setView('shelf')}
             className="ml-1 w-6 h-6 flex items-center justify-center rounded-md"
@@ -2726,9 +2734,11 @@ const pickProject = useCallback(async (id) => {
           </span>
         )}
 
-        {toast && <span className="text-[11px] mr-1" style={{ color: 'var(--accent)' }}>{toast}</span>}
-        {status && <span className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>{status}</span>}
-        {dirty && <span className="text-[11px]" style={{ color: 'var(--accent)' }}>● 未保存</span>}
+        {/* ⚠ 三条都是**编辑器**的状态（保存提示 / 正在做什么 / 正文有改动）。
+            设置页盖着时它们说的是底下那层的事，摆在这儿只会让人以为设置没生效。 */}
+        {!showSettings && toast && <span className="text-[11px] mr-1" style={{ color: 'var(--accent)' }}>{toast}</span>}
+        {!showSettings && status && <span className="text-[11px]" style={{ color: 'var(--ink-soft)' }}>{status}</span>}
+        {!showSettings && dirty && <span className="text-[11px]" style={{ color: 'var(--accent)' }}>● 未保存</span>}
 
         {/* ---------- 卡片开关：收起左边两栏 ----------
             放在最右而不是紧跟快捷工具，是为了让 flex-1 把它们推到窗边。
@@ -2736,7 +2746,22 @@ const pickProject = useCallback(async (id) => {
                这样提示冒出来时按钮不会跟着往左跳一下。 */}
         <div
           className="flex items-center gap-1 ml-2 pl-2 shrink-0"
-          style={{ borderLeft: '1px solid var(--line)', WebkitAppRegion: 'no-drag' }}
+          style={{
+            borderLeft: '1px solid var(--line)',
+            WebkitAppRegion: 'no-drag',
+            /**
+             * 设置页打开时整组功能按钮藏起来（2026-11-07）。
+             *
+             * 羽毛菌截图里圈了这一整块：教程 / ⇄ 传文件 / 月亮 / 栏开关。
+             * 它们在设置页上全是死的 —— 设置页不显示对话、不显示正文，
+             * 点"教程"弹出来盖在设置页上、点"传文件"共享的是后台那个项目，
+             * 用户看到的是"按了没反应"。
+             * ⚠ 只藏这一组，**窗口三个按钮（最小化/最大化/关闭）必须留着**，
+             *   否则进了设置页就关不掉窗口。它们在下一个 div 里，不受影响。
+             * ⚠ 连 borderLeft 一起藏：留着就是一条悬空的竖线。
+             */
+            display: showSettings ? 'none' : undefined,
+          }}
         >
           {/**
             * 一键切深浅（2026-11-02）。
@@ -2807,6 +2832,25 @@ const pickProject = useCallback(async (id) => {
               onClick={() => setShowGuide(true)}
             >
               教程
+            </button>
+          )}
+          {/**
+            * 局域网传文件（2026-11-06）。
+            *
+            * ⚠ 只在编辑器里出现，而且必须有项目 —— 共享的是**当前这本**，
+            *   书架上没有"当前项目"，按钮会出现点了报错的尴尬。
+            * ⚠ 图标 + 三个字，不写成纯图标：这是个新功能，用户不认识它的图形，
+            *   但也不该占一整个按钮的宽度去解释（解释在 title 里）。
+            */}
+          {view === 'editor' && !!projectId && (
+            <button
+              type="button"
+              data-testid="lan-open"
+              className="tb-btn h-7 px-2 rounded-lg text-[12px] shrink-0"
+              title="局域网传文件：手机扫码就能收发，文件不经过任何服务器"
+              onClick={() => setShowLan(true)}
+            >
+              ⇄ 传文件
             </button>
           )}
           {/**
@@ -3184,6 +3228,15 @@ const pickProject = useCallback(async (id) => {
         <GuideModal
           onClose={() => setShowGuide(false)}
           onOpenSettings={openSettings}
+        />
+      )}
+
+      {/* ---------- 局域网传文件：打开才起服务，关掉就停 ---------- */}
+      {showLan && (
+        <LanShare
+          projectName={(projects || []).find((p) => p.id === projectId)?.name || ''}
+          onClose={() => setShowLan(false)}
+          onReceived={() => { refreshTree(); }}
         />
       )}
 

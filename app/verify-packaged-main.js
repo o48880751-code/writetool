@@ -12,7 +12,13 @@ const fs = require('node:fs');
 const os = require('node:os');
 const Module = require('node:module');
 
-const APP = 'D:/Documents/qwen-agent/vbVMzLbqoE/default/ollama-toolcall-验证/app';
+/**
+ * ⚠ 用 __dirname 推导，不写绝对路径（2026-11-07 项目搬到 E:\inkscrollcode）。
+ *   这个文件就在 app/ 下面，所以 __dirname 就是 app。
+ *   写死 D 盘路径的话，搬完家它会去读一个不存在的目录，
+ *   报"ENOENT"而不是"我找错地方了"，等于白跑一轮。
+ */
+const APP = __dirname;
 const PRODUCT = path.join(APP, 'release-fix', 'win-unpacked');
 const ASAR = path.join(PRODUCT, 'resources', 'app.asar');
 const OUT = path.join(os.tmpdir(), 'wt-asar-check');

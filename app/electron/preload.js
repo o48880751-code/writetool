@@ -160,6 +160,26 @@ contextBridge.exposeInMainWorld('api', {
     export: ({ id }) => call('project:export', { id }),
   },
 
+  // ---- 局域网传文件（2026-11-06） ----
+  lan: {
+    /** 起服务。只共享当前项目，返回 { urls, token, port, projectName } */
+    start: () => call('lan:start'),
+    stop: () => call('lan:stop'),
+    status: () => call('lan:status'),
+    /**
+     * 手机传上来一个文件时通知界面。
+     *
+     * ⚠ 这个通道是**单向推送**，载荷 { type:'received', name, rel, size }。
+     *   界面收到只做两件事：刷新文件树、提示一句"收到 xxx"。
+     *   不做自动打开 —— 用户可能一次传十个，自动打开会抢焦点。
+     */
+    onEvent: (fn) => {
+      const h = (_e, d) => fn(d);
+      ipcRenderer.on('lan:event', h);
+      return () => ipcRenderer.removeListener('lan:event', h);
+    },
+  },
+
   // ---- 章节 ----
   chapter: {
     list: ({ projectId }) => call('chapter:list', { projectId }),

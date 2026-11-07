@@ -345,6 +345,14 @@ export default function ChatPanel({
   onWelcomeAction = null,
 }) {
   const [text, setText] = useState('');
+  /**
+   * 生成开始后过了多少秒（2026-11-07）。
+   *
+   * 羽毛菌的反馈：「没有英文思考、中文回复，就卡在那了，我也不知道模型有没有在思考」。
+   * 首字到达之前界面是空白的 —— 分不清"模型在思考"和"软件死了"。
+   * 这里只做一件事：把等待时间显示出来，让用户知道它还在等。
+   */
+  const [waitSec, setWaitSec] = useState(0);
 
   /**
    * 「不带历史」开关（2026-10-29）。
@@ -367,6 +375,18 @@ export default function ChatPanel({
     // ⚠ 写失败不弹错：这个开关最坏的结果只是多带了历史，不值得打断用户
     window.api.config.set({ noHistory: next }).catch(() => {});
   };
+  /**
+   * ⚠ 只在 generating 为 true 时跑，停止/完成立刻清零。
+   *   1 秒一跳就够，500ms 会让 React 每秒重渲染两次（长对话下能感觉到卡）。
+   */
+  useEffect(() => {
+    if (!generating) { setWaitSec(0); return undefined; }
+    const t0 = Date.now();
+    setWaitSec(0);
+    const id = setInterval(() => setWaitSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [generating]);
+
   const [refs, setRefs] = useState([]);          // 引用的 skill / file
   const [picker, setPicker] = useState(null);     // 'skill' | 'file' | null
   const flowRef = useRef(null);
@@ -775,6 +795,7 @@ export default function ChatPanel({
                       className="cursor-pointer select-none"
                       style={{ fontSize: 11, opacity: 0.8 }}
                     >
+                      <span className="msg-dots" aria-hidden="true"><i /><i /><i /></span>
                       正在思考（{streamingThink.length} 字）
                     </summary>
                     <div
@@ -807,10 +828,30 @@ export default function ChatPanel({
                     style={{ fontSize: `${fontSize || 16}px`, fontFamily: fontFamily || 'system-ui' }}
                   ><RichText text={streamingText} /></div>
                 ) : (!streamingThink ? (
+                  /**
+                   * ⚠⚠ 首字到达之前，界面上必须**有东西在动**（2026-11-07）。
+                   *
+                   *   原来是三个静止的点 `…`。它和"软件卡死"长得一模一样 ——
+                   *   羽毛菌的原话：「就卡在那了，我也不知道模型有没有在思考」。
+                   *   现在三个点会跳，并且按等待时长换说法：
+                   *     3 秒内   → 正在连接模型（正常，别吓人）
+                   *     20 秒内  → 模型还没开口，附上秒数（用户在等，给他数）
+                   *     超过 20  → 明说可以停掉重发（不然他只能干等）
+                   */
                   <div
-                    className="msg-ai streaming"
+                    className="msg-ai streaming msg-wait"
+                    data-testid="gen-waiting"
                     style={{ fontSize: `${fontSize || 16}px`, fontFamily: fontFamily || 'system-ui' }}
-                  >…</div>
+                  >
+                    <span className="msg-dots" aria-hidden="true"><i /><i /><i /></span>
+                    <span>
+                      {waitSec < 3
+                        ? '正在连接模型…'
+                        : (waitSec < 20
+                          ? `模型还没开口（已等 ${waitSec} 秒）`
+                          : `已等 ${waitSec} 秒，可能网络慢或模型忙 — 可以停掉重发`)}
+                    </span>
+                  </div>
                 ) : null)}
               </div>
             </div>

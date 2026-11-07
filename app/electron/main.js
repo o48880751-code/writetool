@@ -1516,6 +1516,15 @@ app.whenReady().then(async () => {
     return;
   }
   pfs = new ProjectFs(path.join(USER_DIR, 'projects'));
+  /**
+   * 文件一改就刷新 `projects.updated_at`（2026-11-07）。
+   *
+   * ⚠ 在此之前它只在建项目和改名时更新，于是书架横幅永远停在"刚建的那本"——
+   *   羽毛菌连着几天写同一本，横幅却仍是两天前建的另一个项目。
+   *   挂在 pfs 上而不是各个 IPC 里，是因为 AI 自动写章节也走 pfs.write，
+   *   逐个 IPC 打补丁一定会漏。
+   */
+  pfs.onContentChange = (id) => store.touchProject(id);
   trash = new Trash(pfs);
   fs.mkdirSync(pfs.root, { recursive: true });
 
@@ -2715,6 +2724,36 @@ handle('ollama:check', async () => {
 // ---- 项目 ----
 handle('project:list', () => store.listProjectsWithKind());
 
+/* ---------------- 局域网传文件（2026-11-06） ----------------
+ * 羽毛菌的原话：「局域网共享就是互相传输文件啊，又不能操控」。
+ * 所以这里做的是**双向传文件**：手机扫码用浏览器打开，能下载项目里的 md，
+ * 也能把手机上的文件送进项目的「收件箱」。手机端不装任何东西。
+ *
+ * ⚠ 只共享**当前项目目录**，不是整个项目库 —— 打开哪本就看到哪本。
+ *   少一层"选哪个项目"的判断，也少一层手滑把别的书发出去的风险。
+ * ⚠ 服务是**按需启停**的：打开面板才起，关掉就停。不要做成开机常驻，
+ *   否则用户根本不知道自己电脑上有个 HTTP 服务在监听。
+ */
+const lanShare = require('./lan-share.js');
+
+handle('lan:start', async () => {
+  const id = config.currentProject;
+  if (!id) throw new Error('先打开一个项目 —— 共享的是当前这本');
+  const root = pfs.dirOf(id);
+  const p = (store.listProjects() || []).find((x) => x.id === id);
+  return lanShare.start({
+    root,
+    projectName: p ? p.name : path.basename(root),
+    onEvent: (e) => {
+      if (win && !win.isDestroyed()) win.webContents.send('lan:event', e);
+    },
+  });
+});
+
+handle('lan:stop', async () => { await lanShare.stop(); return { stopped: true }; });
+
+handle('lan:status', () => lanShare.status());
+
 /**
  * 新建向导第三步：让模型提案（2026-11-01）。
  *
@@ -3594,6 +3633,14 @@ handle('conv:send', async (payload) => {
 
   // 1) 落库用户消息
   store.addMessage({ conversationId, role: 'user', content: text || '', refs });
+  /**
+   * 发一条消息也算"在动这本书"（2026-11-07）。
+   *
+   * ⚠ 只靠文件写入刷新还不够：用户可能整晚都在跟 AI 讨论大纲、没有落盘，
+   *   那时"最近编辑"按他的直觉仍然是这本。对话本身就是编辑的一部分。
+   * ⚠ try/catch 兜住：记一笔失败不该让发送失败。
+   */
+  try { store.touchProject(payload.projectId || config.currentProject); } catch (_) {}
   // 记住这条对话：停止时要把半截正文写回同一个地方
   activeConvId = conversationId;
 

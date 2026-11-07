@@ -269,6 +269,26 @@ class ProjectFs {
      * 落一个绝对路径进库，只会在几个月后变成一堆看不懂的失效记录。
      */
     this.externalDirs = new Map();
+
+    /**
+     * 项目内容变化时的回调（2026-11-07）。主进程注入成 `store.touchProject`。
+     *
+     * ⚠ 为什么不在这里直接 require store：ProjectFs 是纯文件层，不认识数据库。
+     *   绑上之后凡是能跑 pfs 的地方都得连着 db 一起起，
+     *   判据里那几个只用临时目录的用例会全挂。
+     * ⚠ 谁改文件都要经过下面那几个写方法，所以挂在这里一处就全覆盖 ——
+     *   包括 AI 自动写章节（它也走 pfs.write）。
+     */
+    this.onContentChange = null;
+  }
+
+  /**
+   * 写操作后"记一笔"。失败**绝不影响写文件本身** ——
+   * 排序旧一点是小事，写不进去是大事。
+   */
+  _touch(projectId) {
+    if (typeof this.onContentChange !== 'function') return;
+    try { this.onContentChange(projectId); } catch (_) { /* 见上 */ }
   }
 
   /**
@@ -635,6 +655,7 @@ class ProjectFs {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     const text = String(content == null ? '' : content);
     fs.writeFileSync(abs, text, 'utf8');
+    this._touch(projectId);
     return { ok: true, bytes: Buffer.byteLength(text, 'utf8') };
   }
 
@@ -648,6 +669,7 @@ class ProjectFs {
     if (fs.existsSync(abs)) throw new Error(`已存在：${relPath}`);
     if (opts.dir) {
       fs.mkdirSync(abs, { recursive: true });
+      this._touch(projectId);
       return { ok: true, type: 'dir' };
     }
     const ext = path.extname(relPath).toLowerCase();
@@ -657,6 +679,7 @@ class ProjectFs {
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     const seed = opts.content != null ? String(opts.content) : `# ${path.basename(relPath, ext)}\n\n`;
     fs.writeFileSync(abs, seed, 'utf8');
+    this._touch(projectId);
     return { ok: true, type: 'file', bytes: Buffer.byteLength(seed, 'utf8') };
   }
 
@@ -668,6 +691,7 @@ class ProjectFs {
     if (fs.existsSync(to)) throw new Error(`目标已存在：${toPath}`);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.renameSync(from, to);
+    this._touch(projectId);
     return { ok: true };
   }
 
@@ -708,6 +732,7 @@ class ProjectFs {
       const left = fs.readdirSync(abs);
       if (left.length) throw new Error('目录非空，删除需要勾选「含子内容」');
       fs.rmdirSync(abs);
+      this._touch(projectId);
       return { ok: true, type: 'dir' };
     }
     if (opts.recursive) {
@@ -715,6 +740,7 @@ class ProjectFs {
     } else {
       fs.unlinkSync(abs);
     }
+    this._touch(projectId);
     return { ok: true };
   }
 

@@ -98,7 +98,17 @@ function Node({
 
   // 拖拽视觉的三种态：自己是源 / 插入点在上或下 / 目标文件夹
   const isSource = drag?.path === node.path;
-  const dropLine = drag?.overPath === node.path && !drag?.intoDir ? drag.place : null;
+  /**
+   * ⚠⚠ 这里必须以 `drag &&` 开头，不能只靠可选链（2026-11-07）。
+   *
+   *   原写法 `drag?.overPath === node.path && !drag?.intoDir ? drag.place : null`：
+   *   drag 为 null 时左边是 `undefined === node.path` —— 只要 node.path 也是
+   *   undefined（数据不全、桩里漏字段、老版本缓存），这个比较就成立，
+   *   然后走进分支读 `drag.place` → `Cannot read properties of null`，
+   *   整个 React 树被错误边界接住，用户看到的是满屏红色堆栈。
+   *   拖拽态本来就是 null 开头的，所以这里必须显式判空。
+   */
+  const dropLine = drag && drag.overPath === node.path && !drag.intoDir ? drag.place : null;
   const isDropDir = drag?.overPath === node.path && drag?.intoDir;
 
   /**

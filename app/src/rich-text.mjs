@@ -76,3 +76,56 @@ export function parseText(text) {
     .split('\n')
     .map((line) => (line === '' ? { type: 'blank' } : parseLine(line)));
 }
+
+/* ------------------------------------------------------------------ */
+/* 表格（2026-11-07 加）                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 分隔行：`|---|:--:|` 这种。表格能不能渲染出来，全靠这一行。
+ *
+ * ⚠ 不能只判"含短横线"：正文里 `—— 光标停在这里` 也含横线，
+ *   误判成表格会把整段拆进单元格。
+ */
+const TABLE_SEP = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+
+/** 是不是一行表格（首尾都要有竖线，避免把 `a | b` 这种正文当表格） */
+export function isTableRow(line) {
+  const s = String(line == null ? '' : line).trim();
+  if (s.length < 2) return false;
+  return s.startsWith('|') && s.endsWith('|');
+}
+
+export function isTableSeparator(line) {
+  const s = String(line == null ? '' : line).trim();
+  if (!s) return false;
+  // 只吃 ASCII 竖线与短横，别让中文竖线混进来
+  if (!/^[|\s:-]+$/.test(s)) return false;
+  return TABLE_SEP.test(s);
+}
+
+/**
+ * 拆一格。
+ * ⚠ 转义过的 `\|` 是内容里的竖线，不是分隔符 —— 模型写 `a\|b` 时
+ *   直接 split('|') 会把一格拆成两格。
+ */
+export function splitTableCells(line) {
+  const s = String(line == null ? '' : line)
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '');
+  return s.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
+}
+
+/**
+ * 一格里的内联格式（**粗体** / `代码`），复用 parseLine。
+ *
+ * ⚠ 单元格内容如果整格就是 `**夜枫**`，parseLine 会判成 `key` 类型
+ *   （那是给"整行加粗 → 当小标题放大"用的），而这种对象**没有 parts**。
+ *   直接读 parts 会把这一格渲染成空白 —— 表格里最左边一列常常就长这样。
+ */
+export function parseCell(cell) {
+  const p = parseLine(String(cell == null ? '' : cell));
+  if (p.type === 'key') return [{ kind: 'bold', text: p.text }];
+  return p.parts || [];
+}

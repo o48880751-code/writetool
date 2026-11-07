@@ -387,6 +387,32 @@ class Store {
   }
 
   /**
+   * 标记"这本书刚被动过"（2026-11-07）。
+   *
+   * ## 为什么需要它
+   *
+   * 书架的大横幅取的是 `updated_at` 最新的那本，语义是"上次写到哪了"。
+   * 但 `updated_at` 原来**只在建项目和改名时**写 —— 写章节、改设定、
+   * 发对话全都不碰它。于是羽毛菌连着几天写同一本，横幅却还停在
+   * 两天前建的那本上，他截图来问「我最近一直写这本，横幅怎么不是它」。
+   *
+   * ## 谁调它
+   *
+   * `ProjectFs` 的写操作统一回调（见 project-fs.js 的 onContentChange），
+   * 主进程注入成 `store.touchProject`。**不在这里判"值不值得刷新"** ——
+   * 写了就是写了，一次 UPDATE 的成本远低于算错的代价。
+   *
+   * ⚠ 故意不抛错：这行是"顺带记一笔"，失败最多是横幅排序旧一点，
+   *   绝不该让用户的写文件操作失败。调用方自己 try/catch。
+   */
+  touchProject(id) {
+    if (!id) return 0;
+    return this.prep(
+      "UPDATE projects SET updated_at = datetime('now','localtime') WHERE id = ?"
+    ).run(id).changes;
+  }
+
+  /**
    * 项目列表 + 解析好的 `kind`（2026-11-01）。
    *
    * ⚠ 书架卡片要显示「长篇 / 短篇 / 短剧」，
