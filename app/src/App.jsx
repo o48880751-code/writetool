@@ -2364,7 +2364,12 @@ const pickProject = useCallback(async (id) => {
      * 而且白屏上只有一行报错，用户看到的和"软件坏了"没区别。
      * （这条是截图脚本抓出来的：渲染进程的代码没有任何自动化测试真跑过。）
      */
-    const want = stored || (config && config.thinkLevel) || 'off';
+    /**
+     * ⚠ 兜底值跟着主进程的默认一起改成 medium（2026-11-07）。
+     *   两处不一致的话，config 还没加载完的那一帧会显示「关闭」，
+     *   用户以为思考被关了，点半天没反应。
+     */
+    const want = stored || (config && config.thinkLevel) || 'medium';
     return thinkLevels ? normalizeLevel(want, thinkLevels) : want;
   }, [conversations, convId, config && config.thinkLevel, thinkLevels]);
 

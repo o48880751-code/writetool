@@ -57,16 +57,36 @@ function loadResedit() {
 /**
  * 用户看到的名字（2026-11-03 加）。
  *
- * ⚠⚠ 这里**不能**直接用 productName：`productName` 同时决定
- *   `app.getPath('userData')` 的目录名和 exe 文件名（WriteTool.exe）。
- *   把它改成「长卷」，老用户的配置和项目会"消失"（数据还在旧目录里，只是程序不看了）。
+ * ## 2026-11-07 改名后这里必须跟着变
  *
- * 所以拆成两个名字：
- *   · productName = WriteTool  → 目录 / 文件名 / 内部标识（**永不变**）
- *   · displayName = 长卷        → 文件属性、任务管理器、控制面板里显示的名字
+ * 原来 productName 是 WriteTool，所以 exe 就叫 WriteTool.exe，
+ * 下面两处直接写死也没事。
+ *
+ * 现在 productName 改成了 InkScroll（品牌统一），exe 变成 **InkScroll.exe** ——
+ * 写死的那个名字会让打包在第三步直接报「找不到 WriteTool.exe」，
+ * 而前两步明明都成功了，看起来像"打包坏了"。
+ *
+ * 当时不敢改 productName 的理由是「它决定 userData 目录名」，
+ * 那个问题现在用另一条路解决了：main.js 里把 userData **显式钉回**
+ * `%APPDATA%\writetool`（见那里的注释）。所以这里可以放心跟着 productName 走。
+ *
+ * 两个名字的分工没变：
+ *   · productName → 目录 / exe 文件名 / 内部标识
+ *   · displayName → 文件属性、任务管理器、控制面板里显示的名字（「长卷」）
  */
 function displayNameOf(pkg) {
-  return pkg.displayName || pkg.build?.productName || pkg.productName || 'WriteTool';
+  // ⚠ 优先 shortcutName（"长卷"）：build.productName 现在是 InkScroll，
+  //   直接用它会让任务管理器里显示英文名，和启动页对不上。
+  return pkg.displayName
+    || (pkg.build && pkg.build.nsis && pkg.build.nsis.shortcutName)
+    || pkg.build?.productName
+    || pkg.productName
+    || 'InkScroll';
+}
+
+/** exe 的文件名（不含扩展名），由 productName 决定 —— 只在这里算一次 */
+function exeBaseOf(pkg) {
+  return pkg.build?.productName || pkg.productName || 'InkScroll';
 }
 
 /**
@@ -74,8 +94,9 @@ function displayNameOf(pkg) {
  * @param {string} dir 产物目录（含 WriteTool.exe）
  * @returns {{ok:boolean, exePath?:string, error?:string}}
  */
-function patchExe(dir) {
-  const exePath = path.join(dir, 'WriteTool.exe');
+function patchExe(dir, pkgHint) {
+  const pkg0 = pkgHint || JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+  const exePath = path.join(dir, exeBaseOf(pkg0) + '.exe');
   if (!fs.existsSync(exePath)) {
     return { ok: false, error: `找不到 ${exePath}（先跑 npm run package）` };
   }
@@ -88,10 +109,10 @@ function patchExe(dir) {
   }
 
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-  const product = pkg.build?.productName || pkg.productName || 'WriteTool';
+  const product = exeBaseOf(pkg);
   const display = displayNameOf(pkg);
   const desc = pkg.description || '本地长篇小说写作工具';
-  const author = pkg.author || 'WriteTool';
+  const author = pkg.author || 'InkScroll';
   const copyright = pkg.copyright || `Copyright © ${new Date().getFullYear()} ${author}`;
   const version = pkg.version || '0.1.0';
 
@@ -105,7 +126,7 @@ function patchExe(dir) {
     LegalCopyright: copyright,
     // ⚠ 这两个必须还是真实文件名，改了会让某些校验工具认为 exe 被替换过
     InternalName: product,
-    OriginalFilename: 'WriteTool.exe',
+    OriginalFilename: product + '.exe',
   };
 
   try {

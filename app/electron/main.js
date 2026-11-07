@@ -374,6 +374,48 @@ if (process.env.WT_USERDATA && path.isAbsolute(process.env.WT_USERDATA)) {
   app.setPath('userData', process.env.WT_USERDATA);
 }
 
+/**
+ * 数据目录**钉死在旧路径**（2026-11-07）。
+ *
+ * ## 背景
+ *
+ * `productName` 从 `WriteTool` 改成了 `InkScroll`（品牌统一）。
+ * 实测（最小工程验证过）：Electron 的 `app.getName()` **优先取 productName**，
+ * 所以 userData 会跟着从 `%APPDATA%\writetool` 变成 `%APPDATA%\InkScroll`。
+ * 而老用户的数据 —— **36MB 小说项目 + 对话库 + API 密钥**（safeStorage 的
+ * 解密密钥也在 `Local State` 里）—— 全在旧目录。
+ *
+ * ## 为什么选择"钉死"而不是"自动迁移"
+ *
+ * 试过迁移：判据只能写"新目录里有没有 db"，而 Electron 一启动就会建空库
+ * （4096 字节），于是**迁移一次都不会触发**，用户看到的是"我的书全没了"。
+ * 要写对就得判断"这个库是不是空的"、"projects 里有没有东西"，
+ * 每一条都是猜，猜错就是数据丢失或覆盖用户新内容。
+ *
+ * 钉死零风险：路径根本没变，老数据原地就能读到。
+ * 代价只是 `%APPDATA%` 里那个文件夹还叫 writetool —— **那是用户看不到的地方**，
+ * 而用户看得见的是窗口标题、启动页、安装目录、快捷方式，那些都已经改了。
+ *
+ * ## 新用户
+ *
+ * `%APPDATA%\writetool` 不存在 → 不钉，正常走 `%APPDATA%\InkScroll`。
+ * 所以这个文件夹名只会出现在**老用户**机器上，不会传染给新装的人。
+ *
+ * ⚠ 必须在**任何 getPath('userData') 之前**执行。
+ * ⚠ 设了 WT_USERDATA 时不要插手（那是显式隔离，见上）。
+ */
+if (!process.env.WT_USERDATA) {
+  try {
+    const legacy = path.join(app.getPath('appData'), 'writetool');
+    if (fs.existsSync(path.join(legacy, 'writetool.db'))) {
+      app.setPath('userData', legacy);
+    }
+  } catch (e) {
+    // 钉不上就用默认路径，至少不阻断启动
+    console.error('[userData] 无法指向旧目录：', e && e.message);
+  }
+}
+
 // 用户数据目录：Electron 惯例，放 AppData 而不是安装目录（安装目录可能只读）
 const USER_DIR = app.getPath('userData');
 const DB_PATH = path.join(USER_DIR, 'writetool.db');
@@ -458,11 +500,21 @@ const DEFAULT_CONFIG = {
   /**
    * 思考强度：off | low | medium | high。
    *
-   * 默认 off——实测开启后 token 数涨到 4~5 倍，
-   * 而写续写正文这类活基本不需要推理。
-   * 需要推理的场景（设定推演、人物动机）再手动调高。
+   * ⚠⚠ 默认从 `off` 改成 `medium`（2026-11-07，羽毛菌：「还是没有英文思考后台，
+   *   只有吐字，不加吗？」）。
+   *
+   * 原来默认关，理由是「开启后 token 涨 4~5 倍，续写正文不需要推理」。
+   * 但实测下来这条理由站不住：
+   *   · 用户看到的是一段没有任何过程的文字，**分不清"模型在推理"和"软件在编"**；
+   *   · 写长篇最怕设定吃书，而吃书恰恰是"没想就写"的直接后果；
+   *   · 思考内容在界面上是**可折叠**的，不干扰阅读，只占一行。
+   * 所以默认给 `medium`：日常够用、又不是最慢那档。
+   * 嫌慢的人随时可以在输入框右边改成「关闭」——那个选择权仍然在用户手里。
+   *
+   * ⚠ 只影响**新会话**。已有会话的 `think_level` 存了明确的值（含 'off'），
+   *   这里改默认不会覆盖它们 —— 不能替用户改他上次的选择。
    */
-  thinkLevel: 'off',
+  thinkLevel: 'medium',
   fontSize: 16,
   fontFamily: 'system-ui',
   theme: 'light',
@@ -950,7 +1002,7 @@ function providerConfig(over = {}) {
     //   写成 `over.thinkLevel ? ... : ...` 的话，
     //   用户显式选的 "" 会被当成"没给"，退回全局——
     //   表现是"我明明选了关闭，它还是开着"。
-    thinkLevel: over.thinkLevel != null ? over.thinkLevel : (config.thinkLevel || 'off'),
+    thinkLevel: over.thinkLevel != null ? over.thinkLevel : (config.thinkLevel || 'medium'),
     /**
      * ⚠⚠ **有连接时绝不能退回 config.thinkStyle**（2026-10-13 修）。
      *
@@ -1024,8 +1076,16 @@ let stopRequested = false;
  * 所以：createSplash 整体 try/catch，且另有两道兜底定时器
  * （ready-to-show 不触发就强制显示、活太久就强制关掉）。
  */
-const SPLASH_W = 420;
-const SPLASH_H = 340;
+/**
+ * 主窗口的初始尺寸（2026-11-07 提成常量）。
+ *
+ * ⚠ 启动动画要和它**完全重合**：两张尺寸不一致的话，
+ *   主窗口出现那一刻画面会"跳一下"——用户看到的是"闪了一下"，
+ *   而真正的原因是两个窗口的坐标系根本不同。
+ * 所以这里只留一份数字，两处都引用。
+ */
+const WIN_W = 1440;
+const WIN_H = 900;
 /** 最短显示时间：主窗口再快，也别让动画闪一下就没了 */
 const SPLASH_MIN_MS = 1800;
 
@@ -1037,11 +1097,24 @@ function createSplash() {
   try {
     const { screen } = require('electron');
     const area = screen.getPrimaryDisplay().workArea;
+    /**
+     * 铺满主窗口那一块（2026-11-07 羽毛菌：「直接做的跟界面大小一样吧，
+     * 就像 Marvis 那样」）。
+     *
+     * ⚠ 原来是 420×340 的居中卡片，浮在桌面上。问题不在于好看不好看，
+     *   而在于**它和主窗口不是同一个矩形**：卡片消失、主窗口出现的那一帧，
+     *   用户看到的是"一块小卡片不见了，然后另一块大东西冒出来"。
+     *   尺寸对齐之后，观感就是"同一个窗口，内容从启动页换成了界面"。
+     * ⚠ 小屏幕上要按工作区裁一下，否则 1440×900 的动画会超出屏幕边缘
+     *   （主窗口本身也吃这个亏，但它是可拖动的，启动动画没法拖）。
+     */
+    const w = Math.min(WIN_W, area.width);
+    const h = Math.min(WIN_H, area.height);
     splash = new BrowserWindow({
-      width: SPLASH_W,
-      height: SPLASH_H,
-      x: Math.round(area.x + (area.width - SPLASH_W) / 2),
-      y: Math.round(area.y + (area.height - SPLASH_H) / 2),
+      width: w,
+      height: h,
+      x: Math.round(area.x + (area.width - w) / 2),
+      y: Math.round(area.y + (area.height - h) / 2),
       frame: false,
       transparent: true,
       backgroundColor: '#00000000',
@@ -1172,8 +1245,8 @@ function closeSplash(delay) {
 function createWindow() {
   log('createWindow 开始');
   win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: WIN_W,
+    height: WIN_H,
     minWidth: 1100,
     minHeight: 700,
     show: false,
@@ -1507,7 +1580,7 @@ app.whenReady().then(async () => {
         e.message,
         '',
         `数据库位置：${DB_PATH}`,
-        '如果刚升级过，请装回新版 WriteTool。',
+        '如果刚升级过，请装回新版 InkScroll（长卷）。',
         '如果怀疑文件损坏：先把 writetool.db 改名备份，再启动会新建一个空库'
         + '（注意：新建空库**不会**自动恢复原来的对话与章节）。',
       ].join('\n'));
@@ -1697,9 +1770,9 @@ function buildMenu() {
 
   const template = [
     ...(isMac ? [{
-      label: 'WriteTool',
+      label: '长卷',
       submenu: [
-        { role: 'about', label: '关于 WriteTool' },
+        { role: 'about', label: '关于长卷' },
         { type: 'separator' },
         { role: 'hide', label: '隐藏' },
         { role: 'hideOthers', label: '隐藏其他' },
@@ -3337,7 +3410,7 @@ const SKILL_MARKET_BASE = 'http://47.110.158.39/files/skills';
 async function fetchJson(url, timeoutMs) {
   const res = await fetch(url, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'User-Agent': 'WriteTool' },
+    headers: { 'User-Agent': 'InkScroll' },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -6250,7 +6323,7 @@ handle('update:check', async () => {
   try {
     const res = await fetch(UPDATE_CHECK_URL, {
       signal: AbortSignal.timeout(8000),
-      headers: { 'User-Agent': 'WriteTool' },
+      headers: { 'User-Agent': 'InkScroll' },
     });
     if (!res.ok) return { ok: false, current, error: `HTTP ${res.status}` };
 

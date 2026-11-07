@@ -16,11 +16,17 @@
 
 const AGREEMENT_VERSION = '1.0.10';
 
-const AGREEMENT_TEXT = `WriteTool 用户协议
+/**
+ * ⚠ 标题用「长卷」，正文里只在解释目录时保留 WriteTool 这个技术名（2026-11-07）。
+ *   羽毛菌：「writetool 还没改成 inkscroll」—— 界面上不该再出现旧名，
+ *   但 `%APPDATA%\writetool` 这个**真实目录名**不能改（一改老用户数据全找不到），
+ *   所以正文里提到路径时仍然写 writetool，并说明它就是数据目录。
+ */
+const AGREEMENT_TEXT = `长卷 用户协议
 （版本 ${AGREEMENT_VERSION}）
 
 一、这个软件是什么
-长卷（WriteTool）是一个本地长篇小说写作工具，帮你写章节、整理设定、查人物、生成简介。
+长卷（InkScroll）是一个本地长篇小说写作工具，帮你写章节、整理设定、查人物、生成简介。
 它只做与小说创作有关的事。所有数据（项目、设置、API 密钥）都保存在你自己电脑上。
 
 二、怎么称呼你

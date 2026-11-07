@@ -55,12 +55,20 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  /**
+   * ⚠ 2026-11-07 改成铺满整窗（和 Marvis 一样）。
+   *
+   *   原来窗口只有 420×340，这里写 100% 就成了一块圆角卡片浮在桌面上。
+   *   现在窗口跟主窗口同尺寸（1440×900），必须**去掉圆角、描边、投影** ——
+   *   那三样都是"浮在桌面上的卡片"才需要的东西；满屏时留着它们，
+   *   四角会露出桌面，看起来还是一张卡片，等于没改。
+   *   另外 `color-mix(..., transparent)` 也要换成实色：半透明在满屏时
+   *   会把壁纸透上来，启动页应该是一张干净的纸。
+   */
   .card {
     width: 100%; height: 100%;
-    border-radius: 22px;
-    background: color-mix(in srgb, var(--paper) 97%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ink) 7%, transparent);
-    box-shadow: 0 18px 50px -12px rgba(0, 0, 0, .28);
+    border-radius: 0;
+    background: var(--paper);
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     animation: cardIn 240ms var(--ease) backwards;
@@ -199,7 +207,7 @@
   <div class="card">
     <div class="mark"><img src="logo.svg" alt="" /></div>
     <div class="title">长卷</div>
-    <div class="sub">WriteTool · 长篇写作</div>
+    <div class="sub">长篇写作 · InkScroll</div>
     <div class="bar"><i></i></div>
     <div class="poem" id="poem">
       <div class="poem-text" id="poem-text"></div>

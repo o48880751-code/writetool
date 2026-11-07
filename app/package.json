@@ -1,6 +1,6 @@
 {
   "name": "writetool",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "本地长篇小说写作工具，数据不出本机",
   "displayName": "长卷",
   "main": "electron/main.js",
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.writetool.app",
-    "productName": "WriteTool",
+    "productName": "InkScroll",
     "directories": {
       "output": "release"
     },
@@ -137,7 +137,7 @@
   },
   "homepage": "https://github.com/o48880751-code/writetool#readme",
   "copyright": "MIT License",
-  "productName": "WriteTool",
+  "productName": "InkScroll",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/o48880751-code/writetool.git"
