@@ -1,5 +1,5 @@
 import { Icon } from './Icons.jsx';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CtxMeter from './CtxMeter.jsx';
 import { WelcomePanel } from './Welcome.jsx';
 
@@ -15,6 +15,7 @@ import {
 } from '../think-levels.js';
 import { ToolCallList, ToolCallsSummary } from './ToolCards.jsx';
 import RichText from './RichText.jsx';
+import { createSpeaker } from '../speech.js';
 
 /**
  * 对话面板 —— 主交互区。
@@ -99,6 +100,20 @@ const ICON_UNDO = ['M2.8 8.2a5.2 5.2 0 1 1 1.7 3.7', 'M2.6 4.4v3.9h3.9'];
 // 删除 = 垃圾桶（盖 + 桶身 + 两道竖线）
 const ICON_TRASH = ['M2.8 4.3h10.4', 'M6.4 4.3V2.9a.8.8 0 0 1 .8-.8h1.6a.8.8 0 0 1 .8.8v1.4', 'M4.2 4.3l.6 8.2a1 1 0 0 0 1 .9h4.4a1 1 0 0 0 1-.9l.6-8.2', 'M6.6 6.8v4M9.4 6.8v4'];
 const ICON_CHECK = ['M3.2 8.4l3.1 3.1 6.5-6.7'];
+/**
+ * 朗读（2026-11-11）。
+ *
+ * ⚠ 喇叭用**线稿**而不是 emoji 🔊：旁边三个图标都是 currentColor 线稿，
+ *   夹一个彩色 emoji 会像随手贴上去的（同一条理由见顶栏那个月亮）。
+ * ⚠ 播放中换成方块「停止」而不是保留喇叭 + 加个小红点：
+ *   用户点它的目的就是"别再念了"，图标直接表达动作。
+ */
+const ICON_SPEAKER = [
+  'M3 6.3h2.3L8.2 3.8a.5.5 0 0 1 .8.4v7.6a.5.5 0 0 1-.8.4L5.3 9.7H3a.6.6 0 0 1-.6-.6V6.9a.6.6 0 0 1 .6-.6z',
+  'M11.4 6.1a2.7 2.7 0 0 1 0 3.8',
+  'M13.2 4.4a5.1 5.1 0 0 1 0 7.2',
+];
+const ICON_SPEAK_STOP = ['M4.7 4.7h6.6v6.6H4.7z'];
 
 /**
  * 一条消息下面的操作条：复制 / 删除 / 撤回。
@@ -126,7 +141,7 @@ const ICON_CHECK = ['M3.2 8.4l3.1 3.1 6.5-6.7'];
  */
 const CONFIRM_MS = 3000;
 
-function MessageActions({ m, canUndo, onAction }) {
+function MessageActions({ m, canUndo, onAction, speaking, onSpeak }) {
   const [copied, setCopied] = useState(false);
   const [armed, setArmed] = useState(null);   // null | 'remove' | 'undo'
   const armTimer = useRef(null);
@@ -157,13 +172,30 @@ function MessageActions({ m, canUndo, onAction }) {
   };
 
   return (
-    <div className="msg-acts">
+    /**
+     * ⚠ 朗读中给**自己**加类，不靠 `:has()` 往上找（2026-11-11 实测）：
+     *   `.msg-row:has(.msg-acts button.speaking) .msg-acts{opacity:1}`
+     *   在这套 DOM 上没生效，量出来还是 0.4 —— 鼠标一移开就看不出
+     *   "这条正在念"。直接标在容器上最省事，也不依赖选择器能力。
+     */
+    <div className={'msg-acts' + (speaking ? ' speaking' : '')}>
       <button
         onClick={copy} data-label={copied ? '已复制' : '复制'}
         className={copied ? 'ok' : ''}
       >
         {copied ? <SvgIcon d={ICON_CHECK} /> : <SvgIcon d={ICON_COPY} />}
       </button>
+      {/* 朗读只给助手消息：念自己写的话没有意义（2026-11-11） */}
+      {onSpeak && (
+        <button
+          onClick={() => onSpeak(m)}
+          data-label={speaking ? '停止朗读' : '朗读这条'}
+          data-testid="msg-speak"
+          className={speaking ? 'speaking' : ''}
+        >
+          <SvgIcon d={speaking ? ICON_SPEAK_STOP : ICON_SPEAKER} />
+        </button>
+      )}
       {canUndo && (
         <button
           onClick={() => run('undo')}
@@ -345,6 +377,27 @@ export default function ChatPanel({
   onWelcomeAction = null,
 }) {
   const [text, setText] = useState('');
+  /**
+   * 朗读助手回复（2026-11-11）。
+   *
+   * ⚠ 播放器实例必须放在 ref 里：它内部有队列和 token，
+   *   每次重渲染都新建一个的话，正在念的会被丢掉、队列也清空，
+   *   表现是"点一下响半秒就停"。
+   * ⚠ 卸载时要 stop：否则用户切到别的对话，上一条还在后台念。
+   */
+  const speakerRef = useRef(null);
+  const [speakingId, setSpeakingId] = useState(null);
+  useEffect(() => {
+    speakerRef.current = createSpeaker({ onState: setSpeakingId });
+    return () => { if (speakerRef.current) speakerRef.current.stop(); };
+  }, []);
+  const speakMessage = useCallback((m) => {
+    if (speakerRef.current) speakerRef.current.play(m.id, m.content);
+  }, []);
+  /** 换对话时停掉：上一条的朗读不属于新对话 */
+  useEffect(() => {
+    if (speakerRef.current) speakerRef.current.stop();
+  }, [conversation && conversation.id]);
   /**
    * 生成开始后过了多少秒（2026-11-07）。
    *
@@ -763,6 +816,8 @@ export default function ChatPanel({
                   m={m}
                   canUndo={m.role === 'user'}
                   onAction={onMessageAction}
+                  speaking={speakingId === m.id}
+                  onSpeak={m.role === 'user' ? null : speakMessage}
                 />
               )}
             </div>

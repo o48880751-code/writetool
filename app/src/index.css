@@ -665,6 +665,10 @@ body.bg-photo .chat-composer {
 .msg-acts button:hover { color: #1f2328; background: rgba(0, 0, 0, .05); }
 .msg-acts button.danger:hover { color: #b42318; background: rgba(180, 35, 24, .07); }
 .msg-acts button.ok { color: #15803d; }
+/* 朗读中：整条操作区常显（鼠标移开也要能看出"这条正在念"）。
+   ⚠ 不能用 .ok —— 那是"复制成功"的绿色，两者语义不同。 */
+.msg-acts button.speaking { color: var(--accent); }
+.msg-acts.speaking { opacity: 1; }
 .msg-acts button.armed { color: #b42318; background: rgba(180, 35, 24, .1); }
 
 /* 悬停提示：图标没有文字，必须靠它说明白这个图标是干什么的。
