@@ -93,6 +93,22 @@ protocol.registerSchemesAsPrivileged([
     scheme: 'wtfile',
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true },
   },
+  /**
+   * 朗读音频协议 `wtts://<缓存文件名>.mp3`（2026-11-16）。
+   *
+   * ⚠⚠ **这里必须注册**，光有后面的 `protocol.handle` 不够。
+   *   漏了这一条的现象非常隐蔽：`tts:synth` 明明成功、缓存里躺着完整的 mp3，
+   *   但 `<audio>` 加载这个地址直接失败 → 播放不了 → 代码退回系统语音，
+   *   用户听到的还是那个机读音，以为"新功能没做"。
+   *   （打包版实测就是这样：缓存里 586KB 音频，用户耳朵里却是 SAPI。）
+   *
+   * ⚠ `stream: true` 不能省：几分钟的 mp3 是边读边播的，
+   *   不开流会让 Audio 等整个文件加载完才开始，点喇叭先卡几秒。
+   */
+  {
+    scheme: 'wtts',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, bypassCSP: true },
+  },
 ]);
 
 

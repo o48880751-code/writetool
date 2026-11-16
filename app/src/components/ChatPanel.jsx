@@ -397,11 +397,17 @@ export default function ChatPanel({
        *   这样切音色不用重建播放器（重建会把正在念的掐掉）。
        */
       fetchAudio: async (text) => {
-        const r = await window.api.tts.synth({ text });
-        if (!r || r.ok !== true || !r.data || !r.data.url) {
-          throw new Error((r && r.error) || '语音合成失败');
-        }
-        return r.data.url;
+        /**
+         * ⚠⚠ 这里**不能**判 `r.ok` / `r.data`（2026-11-16 栽的）。
+         *   preload 的 `call()` 已经拆掉外层 `{ok,data}` 信封：
+         *   成功直接返回 data，失败是 throw。所以 `r.ok` 永远是 undefined，
+         *   写成 `r.ok !== true` 就是**每次都判失败** → 一路退回系统语音，
+         *   用户听到的还是那个机读音，还以为是"新功能没做"。
+         *   （这条是项目里的老坑，注释都写着，还是踩了。）
+         */
+        const d = await window.api.tts.synth({ text });
+        if (!d || !d.url) throw new Error('语音合成没有返回音频地址');
+        return d.url;
       },
     });
     return () => { if (speakerRef.current) speakerRef.current.stop(); };

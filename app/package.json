@@ -1,6 +1,6 @@
 {
   "name": "writetool",
-  "version": "2.0.9",
+  "version": "2.0.11",
   "description": "本地长篇小说写作工具，数据不出本机",
   "displayName": "长卷",
   "main": "electron/main.js",

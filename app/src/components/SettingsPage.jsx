@@ -409,12 +409,16 @@ function Appearance({ local, save, onToast }) {
     if (tryingVoice) return;
     setTryingVoice(true);
     try {
-      const r = await window.api.tts.synth({
+      /**
+       * ⚠ 同 ChatPanel：preload 的 call 已拆信封，成功直接是 data、失败 throw。
+       *   判 `r.ok` 会永远失败，试听按钮点了没声。
+       */
+      const d = await window.api.tts.synth({
         text: '夜枫停下脚步，灯笼往上提了提。远处传来更鼓，已是三更。',
         voice,
       });
-      if (!r || r.ok !== true || !r.data || !r.data.url) throw new Error((r && r.error) || '合成失败');
-      const a = new Audio(r.data.url);
+      if (!d || !d.url) throw new Error('合成没有返回音频地址');
+      const a = new Audio(d.url);
       await a.play();
       if (onToast) onToast('正在试听，点停止可以中断');
       a.onended = () => { if (onToast) onToast(''); };
