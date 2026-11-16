@@ -34,6 +34,21 @@ const meterSrc = fs.readFileSync(path.join(__dirname, 'src', 'components', 'CtxM
 const setSrc = fs.readFileSync(path.join(__dirname, 'src', 'components', 'SettingsPage.jsx'), 'utf8');
 const guardSrc = fs.readFileSync(path.join(ROOT, 'memory', 'loop-guard.js'), 'utf8');
 
+/**
+ * 剥掉整行注释后再扫源码。
+ *
+ * ⚠ 这个坑踩过不止一次：上一版加了一条「前端不许出现 * 0.6」的断言，
+ *   结果命中的是**注释里解释这个 bug 的那句话**，判据恒红，
+ *   而代码其实已经改对了。判据要扫的是可执行代码，不是文档。
+ */
+const codeOnly = (src) => src.split('\n')
+  .filter((line) => {
+    const t = line.trim();
+    return !(t.startsWith('*') || t.startsWith('//') || t.startsWith('/*'));
+  })
+  .join('\n');
+const meterCode = codeOnly(meterSrc);
+
 console.log('上下文压缩契约');
 
 section('一、窗口按连接取，不是全局 8K');
@@ -85,10 +100,26 @@ check('★ report() 暴露 numCtx 与 reserve', () => {
     'report() 没有暴露 numCtx —— 界面拿不到用户设的窗口');
   assert.ok(/reserve:\s*this\.budget\.reserve/.test(guardSrc), 'report() 没有暴露 reserve');
 });
-check('★★ 分母用 numCtx（= 用户设的窗口），不是 historyBudget', () => {
-  assert.ok(/const win = u \? \(u\.numCtx/.test(meterSrc),
-    '分母还在用 historyBudget —— 用户设 131072 却被告知分母 126976');
-  assert.ok(/pct = win > 0 \? used \/ win/.test(meterSrc), '百分比没按 win 算');
+/**
+ * ★★ 这条原来断言的是「分母 = numCtx，不是 historyBudget」。
+ *
+ * ⚠ 2026-11-16 改：那个写法本身有 bug —— 主进程按 `numCtx × 0.6` 判超限，
+ *   而分母用完整 numCtx，于是进度条显示 60% 时实际已经发不出去了。
+ *   修完之后两边都乘 0.6，但**仍是两份硬编码**，改一处忘另一处就重演。
+ *   所以现在只留一个算式，判据改成"验没有第二份"——
+ *   这才是防分叉，验具体数字只能防住这一次。
+ */
+check('★★ 分母由主进程算好下发（前端不自己乘 0.6，杜绝两份硬编码分叉）', () => {
+  assert.ok(/const budget = u \? \(u\.usable \|\| 0\) : 0;/.test(meterSrc),
+    '前端没有用主进程下发的 usable —— 自己算分母迟早和主进程对不上');
+  assert.ok(!/\*\s*0\.6/.test(meterCode),
+    '前端里还留着 * 0.6 —— 两份硬编码就是上次那个 bug 的温床');
+  const defs = (mainSrc.match(/function usableBudgetOf\(/g) || []).length;
+  assert.strictEqual(defs, 1, 'usableBudgetOf 应该只定义一次，实际 ' + defs + ' 次');
+  assert.ok(/const budgetTokens = usableBudgetOf\(cp\.numCtx\)/.test(mainSrc),
+    '超限判定没有用同一个算式 —— 又分叉了');
+  assert.ok(/usable: usableBudgetOf\(/.test(mainSrc),
+    '快照里没有下发 usable —— 前端拿不到分母');
 });
 check('★ 把「输出预留」显式写出来（否则用户不知道差在哪）', () => {
   assert.ok(/输出预留/.test(meterSrc), '详情里没有说明预留');

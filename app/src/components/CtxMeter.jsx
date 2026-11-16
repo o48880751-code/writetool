@@ -108,8 +108,15 @@ export default function CtxMeter({ pollMs = 4000 }) {
    * `historyBudget`（numCtx − reserve）在 context-budget.js 里还有别的用途，
    * 但它**不是**这一轮真正能用的量，不能拿来当分母。
    */
-  const win = u ? (u.numCtx || 0) : 0;
-  const budget = win > 0 ? Math.max(1024, Math.round(win * 0.6)) : 0;
+  /**
+   * ⚠⚠ 分母由**主进程算好给**（`u.usable`），前端不再自己乘 0.6（2026-11-16）。
+   *
+   *   原来这里写 `Math.max(1024, Math.round(win * 0.6))`，
+   *   和 `main.js` 里的判定各写一份 0.6 —— 两份硬编码就是分叉的温床：
+   *   上次正是其中一份没跟着改，进度条显示"才用一半"却发不出去。
+   *   现在只有 `usableBudgetOf()` 一个算式，前端只负责显示。
+   */
+  const budget = u ? (u.usable || 0) : 0;
   const used = u ? (u.usedTokens || 0) : 0;
   const pct = budget > 0 ? used / budget : 0;
   const hasData = !!(u && budget > 0);
@@ -228,8 +235,8 @@ export default function CtxMeter({ pollMs = 4000 }) {
             <span>已用</span>
             <span className="tabular-nums">
               {fmtTokens(used)} / {fmtTokens(budget)} token（{(pct * 100).toFixed(1)}%）
-              {/* ⚠ 分母是 budget（numCtx × 0.6），不是 win —— 和主进程判断超限用的数一致。
-                  显示 win 的话，用户会以为「还有一半空间」实际已经满了。 */}
+              {/* ⚠ 分母是主进程给的 usable（numCtx × 0.6），不是原始窗口。
+                  显示原始窗口的话，用户会以为「还有一半空间」实际已经满了。 */}
             </span>
           </div>
           {u.reserve ? (

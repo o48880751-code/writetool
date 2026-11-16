@@ -893,6 +893,24 @@ function listModels() {
  * ⚠ 外层再加 90 秒兜底：连接本身有 socketTimeout，但"连上了却一直不吐字"
  *   那种卡死不会触发它。
  */
+/**
+ * 这一轮**真正能用**的上下文上限（2026-11-16 抽出来）。
+ *
+ * ## 为什么必须只有一份
+ *
+ * 原来这个 0.6 在主进程和前端各写了一遍：主进程按 `numCtx × 0.6` 判超限，
+ * 指示器却拿 `numCtx` 当分母 —— 进度条显示 60% 时其实已经发不出去了，
+ * 用户看到"才用一半"却被拒绝，合理地震惊。
+ *
+ * 修完之后两边都乘 0.6，但**仍然是两份硬编码**：改一处忘另一处，
+ * 同一个 bug 会原样重演。所以现在只留这一个函数：
+ * 快照里直接把算好的 `usable` 给前端，前端不再自己乘。
+ */
+function usableBudgetOf(numCtx) {
+  const win = Number(numCtx) || 0;
+  return Math.max(1024, Math.round(win * 0.6));
+}
+
 function askModelOnce(messages, { temperature = 0.6, timeoutMs = 90000 } = {}) {
   return new Promise((resolve, reject) => {
     let text = '';
@@ -3950,7 +3968,12 @@ handle('conv:send', async (payload) => {
    */
   const ctxR1 = guard.ensure();
   // ⚠ 记录用量快照供界面读取（见 let ctxUsage 的说明）
-  ctxUsage = { ...guard.report(), starved: !!ctxR1 && !!ctxR1.starved, at: Date.now() };
+  ctxUsage = {
+    ...guard.report(),
+    usable: usableBudgetOf((guard.report() || {}).numCtx),
+    starved: !!ctxR1 && !!ctxR1.starved,
+    at: Date.now(),
+  };
 
   /**
    * ⚠⚠ 总量闸：从最旧开始真裁（2026-10-15 下午重写，第一版裁错了地方）。
@@ -3981,7 +4004,7 @@ handle('conv:send', async (payload) => {
    * 丢完还超（当前提问自己就超预算）→ 明说，让用户开新对话，
    * 而不是把提问砍掉半个。
    */
-  const budgetTokens = Math.max(1024, Math.round(cp.numCtx * 0.6));
+  const budgetTokens = usableBudgetOf(cp.numCtx);
   const beforeTokens = guard.usedTokens();
   let total = beforeTokens;
   let droppedOld = 0;
@@ -4978,7 +5001,12 @@ handle('generate:start', async (payload) => {
    * ensure() 会把压缩结果同步回 messages，必须在取 body.messages 之前调。
    */
   const ctxR2 = guard.ensure();
-  ctxUsage = { ...guard.report(), starved: !!ctxR2 && !!ctxR2.starved, at: Date.now() };
+  ctxUsage = {
+    ...guard.report(),
+    usable: usableBudgetOf((guard.report() || {}).numCtx),
+    starved: !!ctxR2 && !!ctxR2.starved,
+    at: Date.now(),
+  };
 
   // 同上：body 交给 provider 层构造，这里只给 messages 与临时温度
   /**
