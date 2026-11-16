@@ -76,6 +76,20 @@ contextBridge.exposeInMainWorld('api', {
   // ⚠ 这一组是「模型能碰到你电脑」的入口，所以分两类：
   //   decide / onApprove —— 审批往返
   //   setSearchKey / searchKeyStatus —— 搜索服务 Key（走 safeStorage，不进 config）
+  /**
+   * 朗读（2026-11-16）。
+   *
+   * ⚠ 参数**整串透传**，不在这一层挑字段 —— 这层挑字段丢过好几次
+   *   （kind / list / stat / import 参数），而且丢的时候界面看着完全正常。
+   */
+  tts: {
+    /** 合成一段文字，返回 { url, name, cached, bytes } */
+    synth: (p) => call('tts:synth', { ...(p || {}) }),
+    /** 可选音色列表 [{ key, label }] */
+    voices: () => call('tts:voices'),
+    /** 清缓存，返回删掉的文件数 */
+    clearCache: () => call('tts:clearCache'),
+  },
   tool: {
     /** 回传审批结果。allow=false 拒绝。 */
     decide: ({ id, allow }) => call('tool:decide', { id, allow }),

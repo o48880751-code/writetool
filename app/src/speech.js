@@ -135,7 +135,7 @@ export function splitSentences(text) {
  *   onState(playingId|null)  状态变化回调，UI 靠它把图标切成"停止"
  * @returns {{ play(id,text):void, stop():void, playingId():string|null }}
  */
-export function createSpeaker({ rate = 0.95, lang = 'zh-CN', onState } = {}) {
+export function createSpeaker({ rate = 0.95, lang = 'zh-CN', onState, fetchAudio } = {}) {
   /** 当前在播的消息 id；null = 没在播 */
   let current = null;
   /** 待播队列的下标 */
@@ -150,6 +150,16 @@ export function createSpeaker({ rate = 0.95, lang = 'zh-CN', onState } = {}) {
 
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
 
+  /** Edge 语音播出来的 <audio>，停的时候要单独 pause —— speechSynthesis.cancel() 管不到它 */
+  let audioEl = null;
+  /**
+   * 连续失败几次。
+   *
+   * ⚠ 有上限：网络断的时候如果每条都去试一次，用户点喇叭要等 20 秒超时
+   *   才听到系统语音，体验比直接降级还差。连错三次就本次运行内不再尝试。
+   */
+  let edgeFails = 0;
+
   function emit() {
     if (typeof onState === 'function') onState(current);
   }
@@ -158,6 +168,10 @@ export function createSpeaker({ rate = 0.95, lang = 'zh-CN', onState } = {}) {
     token += 1;
     queue = [];
     idx = 0;
+    if (audioEl) {
+      try { audioEl.pause(); } catch (_) { /* 已销毁就忽略 */ }
+      audioEl = null;
+    }
     try { synth && synth.cancel(); } catch (_) { /* 有些环境 cancel 会抛，忽略 */ }
   }
 
@@ -190,9 +204,29 @@ export function createSpeaker({ rate = 0.95, lang = 'zh-CN', onState } = {}) {
     }
   }
 
+  /** 系统语音兜底路径（Edge 不可用时走这里） */
+  function playWithSystem(clean, myToken) {
+    if (!synth) {
+      current = null;
+      emit();
+      return;
+    }
+    queue = splitSentences(clean);
+    idx = 0;
+    if (!queue.length) {
+      current = null;
+      emit();
+      return;
+    }
+    /**
+     * ⚠ cancel() 之后**立刻** speak() 在 Chromium 上有时不生效
+     *   （内部状态还没清干净）。让出一帧再念，实测稳定。
+     */
+    setTimeout(() => speakNext(myToken), 60);
+  }
+
   return {
     play(id, text) {
-      if (!synth) return;
       // 已经在念同一条 → 再点一次就是停
       if (current === id) {
         hardStop();
@@ -200,20 +234,64 @@ export function createSpeaker({ rate = 0.95, lang = 'zh-CN', onState } = {}) {
         emit();
         return;
       }
-      const sentences = splitSentences(speakableText(text));
-      if (!sentences.length) return;
+      const clean = speakableText(text);
+      if (!String(clean || '').trim()) return;
 
       hardStop();
       current = id;
-      queue = sentences;
-      idx = 0;
       emit();
       const myToken = token;
+
       /**
-       * ⚠ cancel() 之后**立刻** speak() 在 Chromium 上有时不生效
-       *   （内部状态还没清干净）。让出一帧再念，实测稳定。
+       * 优先走 Edge 神经语音（2026-11-16）。
+       *
+       * ⚠ 一定要有 catch 兜底：微软那套接口是逆向来的，随时可能失效。
+       *   失败就退回系统语音 —— 音色差总比"点了没反应"好。
        */
-      setTimeout(() => speakNext(myToken), 60);
+      if (typeof fetchAudio === 'function' && edgeFails < 3) {
+        Promise.resolve()
+          .then(() => fetchAudio(clean))
+          .then((url) => {
+            if (myToken !== token) return;
+            if (!url) throw new Error('没有拿到音频地址');
+            edgeFails = 0;
+            const a = new Audio(url);
+            audioEl = a;
+            a.onended = () => {
+              if (myToken !== token) return;
+              audioEl = null;
+              current = null;
+              emit();
+            };
+            a.onerror = () => {
+              if (myToken !== token) return;
+              audioEl = null;
+              current = null;
+              emit();
+            };
+            /**
+             * ⚠ 已经拿到音频地址、只是播不出来（解码失败 / 没有音频设备），
+             *   必须**当场复位**，不能落到下面的 catch 去退系统语音 ——
+             *   设备没声卡时系统语音同样放不出来，结果是按钮永远停在
+             *   「停止朗读」，用户以为卡死了（2026-11-16 判据抓出来的）。
+             */
+            return a.play().catch(() => {
+              if (myToken !== token) return;
+              edgeFails += 1;
+              audioEl = null;
+              current = null;
+              emit();
+            });
+          })
+          .catch(() => {
+            if (myToken !== token) return;
+            edgeFails += 1;
+            playWithSystem(clean, myToken);
+          });
+        return;
+      }
+
+      playWithSystem(clean, myToken);
     },
     stop() {
       hardStop();

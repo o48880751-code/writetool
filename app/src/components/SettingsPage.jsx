@@ -389,6 +389,41 @@ function guardCustomPrompt(text) {
 
 function Appearance({ local, save, onToast }) {
   const fonts = useFonts();
+  /** 朗读试听中（合成要 1~3 秒，不给反馈就像按钮坏了） */
+  /**
+   * ⚠ 必须用**具名导入的 useState**，不能写 React.useState ——
+   *   这个文件只 `import { useState } from 'react'`，根本没有 React 这个名字。
+   *   写成 React.useState 构建照样通过（Vite 不查未定义变量），
+   *   但一打开设置页就是 TypeError，整页白屏。
+   */
+  const [tryingVoice, setTryingVoice] = useState(false);
+
+  /**
+   * 试听音色（2026-11-16）。
+   *
+   * ⚠ 用**当前下拉框里的值**发给主进程，不是 config 里的旧值 ——
+   *   用户切了没保存就点试听，听到应该是新的那个。
+   * ⚠ 失败要说人话：网络不通时提示"合成失败"，而不是静默什么都不发生。
+   */
+  const tryVoice = async (voice) => {
+    if (tryingVoice) return;
+    setTryingVoice(true);
+    try {
+      const r = await window.api.tts.synth({
+        text: '夜枫停下脚步，灯笼往上提了提。远处传来更鼓，已是三更。',
+        voice,
+      });
+      if (!r || r.ok !== true || !r.data || !r.data.url) throw new Error((r && r.error) || '合成失败');
+      const a = new Audio(r.data.url);
+      await a.play();
+      if (onToast) onToast('正在试听，点停止可以中断');
+      a.onended = () => { if (onToast) onToast(''); };
+    } catch (e) {
+      if (onToast) onToast('语音合成失败：' + (e && e.message ? e.message : '未知原因'));
+    } finally {
+      setTryingVoice(false);
+    }
+  };
 
   /* ---------------- 明暗与自定义色（2026-11-01） ---------------- */
   const currentMode = local.mode || 'light';
@@ -595,6 +630,37 @@ function Appearance({ local, save, onToast }) {
           >试听提示音</button>
           <Hint>选「仅提示音」或「窗口 + 提示音」时，生成结束会响。</Hint>
         </div>
+      </Group>
+
+      {/**
+        * 朗读音色（2026-11-16）。
+        * 走的是 Edge 神经语音（联网、免费），不是系统那套老合成音 ——
+        * 系统音念小说像天气预报，羽毛菌的原话是「太人机了」。
+        * ⚠ 断网或接口失效时会自动退回系统语音，不会变成"点了没反应"。
+        */}
+      <Group title="朗读">
+        <Field label="音色">
+          <select
+            value={local.ttsVoice || 'xiaoxiao'}
+            onChange={(e) => save({ ttsVoice: e.target.value })}
+            className="w-full px-2 py-1.5 rounded text-[12.5px] outline-none"
+            style={{ background: 'var(--accent-soft)', color: 'var(--ink)' }}
+            data-testid="tts-voice"
+          >
+            <option value="xiaoxiao">晓晓（女 · 自然）</option>
+            <option value="yunxi">云希（男 · 年轻）</option>
+          </select>
+        </Field>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={() => tryVoice(local.ttsVoice || 'xiaoxiao')}
+            disabled={tryingVoice}
+            className="px-3 py-1.5 rounded text-[12.5px]"
+            style={{ background: 'var(--accent-soft)', color: 'var(--ink)', opacity: tryingVoice ? 0.6 : 1 }}
+            data-testid="tts-try"
+          >{tryingVoice ? '生成中…' : '试听这个音色'}</button>
+        </div>
+        <Hint>念 AI 回复用的是这个音色。初次合成要 1~3 秒，之后同一段文字会走本地缓存。</Hint>
       </Group>
     </>
   );

@@ -388,7 +388,22 @@ export default function ChatPanel({
   const speakerRef = useRef(null);
   const [speakingId, setSpeakingId] = useState(null);
   useEffect(() => {
-    speakerRef.current = createSpeaker({ onState: setSpeakingId });
+    speakerRef.current = createSpeaker({
+      onState: setSpeakingId,
+      /**
+       * Edge 神经语音（2026-11-16）。合成失败会抛错，
+       * speech.js 里 catch 住之后自动退回系统语音。
+       * ⚠ 不传 voice：音色由主进程读 config.ttsVoice 决定，
+       *   这样切音色不用重建播放器（重建会把正在念的掐掉）。
+       */
+      fetchAudio: async (text) => {
+        const r = await window.api.tts.synth({ text });
+        if (!r || r.ok !== true || !r.data || !r.data.url) {
+          throw new Error((r && r.error) || '语音合成失败');
+        }
+        return r.data.url;
+      },
+    });
     return () => { if (speakerRef.current) speakerRef.current.stop(); };
   }, []);
   const speakMessage = useCallback((m) => {

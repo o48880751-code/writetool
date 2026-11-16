@@ -36,6 +36,7 @@ const honorific = require('./honorific');
 const toolPrompts = require('./tool-prompts');
 // wtfile:// 协议（项目内图片）。工厂函数，注册时把 pfs 传进去。
 const { makeWtfileHandler } = require('./file-protocol');
+const tts = require('./tts');
 // 字体下载的镜像候选（国内直连 jsDelivr 会被重置，见该文件头）
 const { mirrorUrls, isFontFile, classifyFontFile } = require('./font-mirror');
 // 单文件下载（抽出去是为了能被判据用本地服务器复现"收满不结束"）
@@ -515,6 +516,12 @@ const DEFAULT_CONFIG = {
    *   这里改默认不会覆盖它们 —— 不能替用户改他上次的选择。
    */
   thinkLevel: 'medium',
+  /**
+   * 朗读音色（2026-11-16）。
+   * 可选值见 electron/tts.js 的 VOICES：xiaoxiao（女·自然）/ yunxi（男·年轻）。
+   * ⚠ 不是系统语音的音色，是 Edge 神经语音的 id 别名。
+   */
+  ttsVoice: 'xiaoxiao',
   fontSize: 16,
   fontFamily: 'system-ui',
   theme: 'light',
@@ -1668,6 +1675,37 @@ app.whenReady().then(async () => {
   protocol.handle('appbg', handleAppbg);
   // 项目内图片（封面）。⚠ 和上面两条一样，注册必须在 app ready 之后。
   protocol.handle('wtfile', makeWtfileHandler(pfs));
+  /**
+   * 朗读音频（2026-11-16）。
+   *
+   * ⚠ 为什么不把音频 base64 直接回给渲染层：
+   *   一条 AI 回复念下来是几分钟的 mp3，几 MB 的 data URL 塞进 Audio
+   *   在 Chromium 上有长度限制，会直接播放失败，而且 IPC 传几 MB 字符串
+   *   会把主进程卡住。走协议让浏览器自己去流式读文件，省内存也省事。
+   * ⚠ 只认 basename：`wtts://aa/../config.json` 这种必须被挡住。
+   */
+  protocol.handle('wtts', (request) => {
+    try {
+      const u = new URL(request.url);
+      const raw = (u.pathname && u.pathname !== '/' && u.pathname !== '')
+        ? u.pathname
+        : u.hostname;
+      const name = path.basename(decodeURIComponent(raw));
+      const dir = path.join(USER_DIR, 'tts-cache');
+      const fp = path.join(dir, name);
+      if (!fp.startsWith(dir + path.sep)) return new Response('forbidden', { status: 403 });
+      const buf = fs.readFileSync(fp);
+      return new Response(buf, {
+        headers: {
+          'content-type': 'audio/mpeg',
+          // 文件名本身就是内容 hash，可以放心长缓存
+          'cache-control': 'max-age=31536000',
+        },
+      });
+    } catch (e) {
+      return new Response('not found', { status: 404 });
+    }
+  });
 
   if (!secret.isEncrypted()) {
     log('系统凭据服务不可用：API 密钥将只保存在本次运行中，重启后需重填。');
@@ -1890,6 +1928,27 @@ const handle = (channel, fn) => {
     }
   });
 };
+
+/**
+ * 朗读：把文字合成成音频文件，返回可播放的协议地址（2026-11-16）。
+ *
+ * ⚠ 失败必须把错误原样带回去：渲染层要靠它判断"该退回系统语音了"。
+ *   自己吞掉错误会让用户点了没反应，还以为按钮坏了。
+ */
+handle('tts:synth', async ({ text, voice }) => {
+  const r = await tts.synthesize({
+    text,
+    voice: voice || config.ttsVoice || tts.DEFAULT_VOICE,
+    cacheDir: path.join(USER_DIR, 'tts-cache'),
+  });
+  return { url: 'wtts://' + r.name, name: r.name, cached: r.cached, bytes: r.bytes };
+});
+
+handle('tts:voices', () => tts.listVoices());
+
+/** 清朗读缓存（设置页的"清缓存"用） */
+handle('tts:clearCache', () => tts.clearCache(path.join(USER_DIR, 'tts-cache')));
+
 
 // ---- 配置 ----
 /**
