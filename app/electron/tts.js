@@ -43,6 +43,24 @@ const DEFAULT_VOICE = 'xiaoxiao';
 /** 单次合成的超时。正常 1~3 秒，20 秒还没回来基本就是网络卡死 */
 const DEFAULT_TIMEOUT_MS = 20000;
 
+/**
+ * 语速的合法范围（百分比，负数=更慢）。
+ *
+ * ⚠ 超出范围要**夹住**而不是报错：这是给滑块用的，
+ *   万一前端传了 -300，合成出来是一段谁也听不懂的噪音。
+ * ⚠ 用百分比而不是 RATE 枚举（x-slow/slow/…）：枚举只有五档，
+ *   而"再慢一点点"这种需求很常见，滑块能连续调。
+ */
+const RATE_MIN = -50;
+const RATE_MAX = 80;
+
+/** 把用户设置里的数字换算成 Edge TTS 要的字符串（-20 → '-20%'，0 → '+0%'） */
+function rateToString(rate) {
+  const n = Number(rate);
+  const v = Number.isFinite(n) ? Math.min(RATE_MAX, Math.max(RATE_MIN, Math.round(n))) : 0;
+  return (v >= 0 ? '+' : '') + v + '%';
+}
+
 /** ESM 模块只加载一次（主进程是 CJS，只能动态 import） */
 let modPromise = null;
 function loadMod() {
@@ -76,15 +94,24 @@ function listVoices() {
  *   timeoutMs 超时
  * @returns {{file:string, name:string, cached:boolean, bytes:number}}
  */
-async function synthesize({ text, voice, cacheDir, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+async function synthesize({ text, voice, rate, cacheDir, timeoutMs = DEFAULT_TIMEOUT_MS }) {
   const clean = String(text == null ? '' : text).trim();
   if (!clean) throw new Error('没有可朗读的文字');
   if (!cacheDir) throw new Error('缺少缓存目录');
 
   const id = voiceIdOf(voice);
+  const rateStr = rateToString(rate);
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  const key = crypto.createHash('sha1').update(id + '\n' + clean).digest('hex');
+  /**
+   * ⚠ 缓存键**必须带上语速**（2026-11-16）。
+   *   语速是合成时烘进音频里的（不是播放时调速），所以 -20% 和 +0%
+   *   是两个完全不同的音频文件。键里不带语速的话，用户把滑块从"正常"
+   *   拖到"很慢"，播出来还是旧的那段 —— 会以为滑块坏了。
+   */
+  const key = crypto.createHash('sha1')
+    .update(id + '|' + rateStr + '\n' + clean)
+    .digest('hex');
   const file = path.join(cacheDir, key + '.mp3');
 
   // 命中缓存：顺手挡掉"上次写到一半"的残缺文件（<1KB 基本不可能是正常音频）
@@ -108,7 +135,7 @@ async function synthesize({ text, voice, cacheDir, timeoutMs = DEFAULT_TIMEOUT_M
 
   let timer = null;
   try {
-    const work = tts.toFile(tmpDir, clean);
+    const work = tts.toFile(tmpDir, clean, { rate: rateStr });
     const r = await Promise.race([
       work,
       new Promise((_, reject) => {
@@ -137,4 +164,4 @@ function clearCache(cacheDir) {
   return n;
 }
 
-module.exports = { synthesize, listVoices, clearCache, VOICES, DEFAULT_VOICE };
+module.exports = { synthesize, listVoices, clearCache, rateToString, VOICES, DEFAULT_VOICE, RATE_MIN, RATE_MAX };

@@ -538,6 +538,11 @@ const DEFAULT_CONFIG = {
    * ⚠ 不是系统语音的音色，是 Edge 神经语音的 id 别名。
    */
   ttsVoice: 'xiaoxiao',
+  /**
+   * 朗读语速（百分比，负数=更慢，2026-11-16）。
+   * ⚠ 是**合成时**烘进音频里的，不是播放时调速 —— 见 tts.js 里缓存键的注释。
+   */
+  ttsRate: 0,
   fontSize: 16,
   fontFamily: 'system-ui',
   theme: 'light',
@@ -1951,10 +1956,16 @@ const handle = (channel, fn) => {
  * ⚠ 失败必须把错误原样带回去：渲染层要靠它判断"该退回系统语音了"。
  *   自己吞掉错误会让用户点了没反应，还以为按钮坏了。
  */
-handle('tts:synth', async ({ text, voice }) => {
+handle('tts:synth', async ({ text, voice, rate }) => {
+  /**
+   * ⚠ 语速的兜底用 `!= null` 而不是 `||`：0 是合法值（=正常语速），
+   *   写成 `rate || config.ttsRate` 的话，前端显式传 0 会被当成"没给"。
+   */
+  const useRate = rate != null ? rate : (config.ttsRate != null ? config.ttsRate : 0);
   const r = await tts.synthesize({
     text,
     voice: voice || config.ttsVoice || tts.DEFAULT_VOICE,
+    rate: useRate,
     cacheDir: path.join(USER_DIR, 'tts-cache'),
   });
   return { url: 'wtts://' + r.name, name: r.name, cached: r.cached, bytes: r.bytes };

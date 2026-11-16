@@ -416,6 +416,8 @@ function Appearance({ local, save, onToast }) {
       const d = await window.api.tts.synth({
         text: '夜枫停下脚步，灯笼往上提了提。远处传来更鼓，已是三更。',
         voice,
+        // 试听要用**当前滑块**的语速，否则用户调完再试听还是旧速度
+        rate: Number(local.ttsRate || 0),
       });
       if (!d || !d.url) throw new Error('合成没有返回音频地址');
       const a = new Audio(d.url);
@@ -655,6 +657,20 @@ function Appearance({ local, save, onToast }) {
             <option value="yunxi">云希（男 · 年轻）</option>
           </select>
         </Field>
+        <Field label="语速">
+          <div className="flex items-center gap-3">
+            <input
+              type="range" min="-50" max="80" step="5"
+              value={Number(local.ttsRate || 0)}
+              onChange={(e) => save({ ttsRate: Number(e.target.value) })}
+              className="flex-1"
+              data-testid="tts-rate"
+            />
+            <span className="text-[12px] tabular-nums w-14 text-right">
+              {(Number(local.ttsRate || 0) > 0 ? '+' : '') + Number(local.ttsRate || 0) + '%'}
+            </span>
+          </div>
+        </Field>
         <div className="mt-2 flex items-center gap-2">
           <button
             onClick={() => tryVoice(local.ttsVoice || 'xiaoxiao')}
@@ -664,7 +680,7 @@ function Appearance({ local, save, onToast }) {
             data-testid="tts-try"
           >{tryingVoice ? '生成中…' : '试听这个音色'}</button>
         </div>
-        <Hint>念 AI 回复用的是这个音色。初次合成要 1~3 秒，之后同一段文字会走本地缓存。</Hint>
+        <Hint>念 AI 回复用的是这个音色和语速。初次合成要 1~3 秒，之后同一段文字会走本地缓存（换语速会重新合成一次）。</Hint>
       </Group>
     </>
   );
